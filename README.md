@@ -55,13 +55,15 @@ procesos distintos que tienen que ver lo mismo. Cada pieza recorre
 `planned → briefed → building → built → delivered → approved | rejected`, y cada
 regeneración queda archivada en `revisions` para poder comparar y volver atrás.
 
-**Telegram por long polling, no webhook.** El sistema corre en una PC detrás de
-NAT: no hay IP pública ni puertos que abrir. El bot sólo obedece al chat que
-configures.
+**Telegram por long polling, no webhook.** Corre igual en una PC detrás de NAT
+que en un servidor sin nada abierto hacia adentro: no hace falta IP pública ni
+exponer un puerto. El bot sólo obedece al chat que configures.
 
 ---
 
 ## Puesta en marcha
+
+**En tu PC.** No hay nada que instalar: cero dependencias npm.
 
 ```powershell
 git clone https://github.com/kitecosmic/brand-content-ai
@@ -69,8 +71,30 @@ cd brand-content-ai
 npm run web        # http://127.0.0.1:4317
 ```
 
-No hay nada que instalar: cero dependencias npm. El panel te lleva de la mano
-desde ahí:
+**En un servidor**, con Docker. La imagen trae Node, Chrome, ffmpeg y la CLI de
+HyperFrames ya instalados y fijados: el render los necesita y en una máquina
+recién instalada no están. Lo único que hace falta en el servidor es Docker.
+
+```bash
+git clone https://github.com/kitecosmic/brand-content-ai
+cd brand-content-ai
+cp .env.example .env      # o dejalo vacío y cargá todo desde Ajustes
+./deploy.sh
+```
+
+Eso deja andando el panel (con el bot, si configurás Telegram) y el ciclo diario.
+El panel escucha en `127.0.0.1:4317` del servidor y **no se publica solo**, así
+que la primera vez entrás por un túnel SSH desde tu máquina:
+
+```bash
+ssh -L 4317:127.0.0.1:4317 usuario@tu-servidor
+```
+
+Y abrís `http://127.0.0.1:4317` en tu navegador. De ahí en más, actualizar es
+`git pull && ./deploy.sh`. El resto —tamaño del servidor, HTTPS, respaldo,
+diagnóstico— está en **[docs/deploy.md](docs/deploy.md)**.
+
+De las dos formas, el panel te lleva de la mano desde ahí:
 
 1. **Creás tu cuenta** — email y contraseña. La primera es la dueña de la
    instalación: puede invitar al equipo y tocar los ajustes.
@@ -128,7 +152,7 @@ son las sesiones abiertas del panel: hay que volver a entrar una vez.
 
 `npm run bot` levanta el panel junto al bot; `npm run web` levanta solo el panel.
 
-Cuatro pestañas, una idea por pestaña:
+Cinco pestañas, una idea por pestaña:
 
 - **Crear** — decís qué querés comunicar, elegís formato e idioma, y sale ahora.
   No toca el calendario: es la pieza que necesitás hoy. La página muestra la fase
@@ -138,8 +162,8 @@ Cuatro pestañas, una idea por pestaña:
 - **Marcas** — crear una marca desde una URL, ver su identidad con su tipografía
   real, y cambiarla escribiendo qué no te gusta. Cada cambio queda como revisión.
 - **Costos** — cuánto se gastó, por tipo de operación.
-- **Ajustes** — la API key del modelo, Telegram, la clave del panel y la ruta de
-  ffmpeg. Lo que guardás acá manda sobre el `.env` y se aplica sin reiniciar;
+- **Ajustes** — la API key del modelo y su endpoint, Telegram, la ruta de ffmpeg
+  y la clave única del modo viejo. Lo que guardás acá manda sobre el `.env` y se aplica sin reiniciar;
   los secretos se guardan en la base y nunca se vuelven a mostrar enteros.
 
 Arriba: el selector de marca activa, la navegación y el tema.
@@ -212,20 +236,6 @@ cerrarlo; para levantarlo en otro puerto, `npm run bot -- --port 4318`.
 
 ### Publicarlo en un servidor
 
-Para que corra 24/7 hay una imagen de Docker con todo lo que el render necesita
-—Node, Chrome, ffmpeg y la CLI de HyperFrames— ya instalado y fijado, más el
-ciclo diario adentro. El servidor no necesita nada además de Docker, y el
-mantenimiento son dos comandos:
-
-```bash
-git pull && ./deploy.sh
-```
-
-El paso a paso completo (tamaño del servidor, HTTPS, respaldo, diagnóstico) está
-en **[docs/deploy.md](docs/deploy.md)**.
-
-Lo que sigue vale igual, con Docker o sin él.
-
 El panel **se niega a escuchar fuera de 127.0.0.1 si no hay forma de
 autenticarse** — ni cuentas creadas ni `BCA_PANEL_PASSWORD`. Un panel abierto
 es la tarjeta de crédito de cualquiera que pase. Con tu cuenta ya creada, podés
@@ -246,6 +256,10 @@ npm run web -- --host 0.0.0.0
 
 `BCA_PANEL_PASSWORD` sigue existiendo para instalaciones que venían con una
 clave compartida: si hay cuentas creadas, se ignora.
+
+Con el despliegue de Docker esto ya viene resuelto y no hace falta abrir el bind:
+el contenedor comparte la red del servidor, así que el panel escucha en loopback
+como en cualquier instalación y quien lo expone es el proxy con TLS de adelante.
 
 ## Formatos
 
@@ -297,7 +311,14 @@ queda archivado junto con la versión que descartaste.
 
 ## Dejarlo corriendo solo
 
-Dos procesos, ambos con el Programador de tareas de Windows:
+**En un servidor, con Docker.** Es lo que hace que corra de verdad las 24 horas.
+`./deploy.sh` deja dos servicios andando: el panel —con el bot, si Telegram está
+configurado— y el ciclo diario, que a la hora de `calendar.publishHourLocal`
+corre sync → plan → generate → deliver. Docker los levanta de nuevo si se caen o
+si reiniciás la máquina, y actualizar es `git pull && ./deploy.sh`. El runbook
+está en [docs/deploy.md](docs/deploy.md).
+
+**En tu PC, con el Programador de tareas de Windows.** Dos procesos:
 
 **El bot, siempre vivo.** Tarea al iniciar sesión, reinicio ante fallo:
 
@@ -314,18 +335,16 @@ schtasks /Create /TN "brand-content-ai-run" /SC DAILY /ST 09:00 ^
   /TR "cmd /c cd /d C:\ruta\a\brand-content-ai && npm run run" /F
 ```
 
-> Con la PC apagada no se genera nada — es la contrapartida de correr local.
-> Si querés que corra 24/7, el sistema se mueve a un servidor casi sin cambios:
-> el modelo ya se habla por HTTP con una API key, así que lo único atado a esta
-> máquina son las rutas de `brand-content-ai.config.json` y el Chrome que usa el render.
+> Con la PC apagada no se genera nada: esa es la contrapartida de correr local,
+> y es la razón de la opción de arriba.
 
 ## Costo
 
 Cada llamada al backend gasta por tokens de entrada y salida, y Brand Content AI calcula
 el costo localmente con `brand-content-ai.config.json -> minimax.pricing` (USD por 1K
 tokens: `{ input, output, cacheRead }`; los tokens que MiniMax sirve desde
-cache se cobran aparte y mucho mas barato). Por eso cada tarea elige su modelo en `cfg.models`, y las
-reparaciones mecánicas del linter van al modelo chico:
+cache se cobran aparte y mucho mas barato). Cada tarea elige su modelo en
+`cfg.models`:
 
 ```json
 "models": {
@@ -408,6 +427,11 @@ src/lib/
   views.mjs           las vistas del panel (HTML puro)
   ui.mjs              layout, estilos (tematizados por marca) y el JS propio
   color.mjs           hex, contraste WCAG y mezcla — lo usan brand.mjs y ui.mjs
+Dockerfile            la imagen del servidor: Node + Chrome + ffmpeg + la CLI
+docker-compose.yml    los dos servicios del servidor: panel y ciclo diario
+deploy.sh             el redespliegue, despues de un git pull
+docker/               arranque, entrypoint y el ciclo diario del contenedor
+docs/deploy.md        el runbook del servidor
 CONTRACTS.md          contratos internos entre modulos
 ```
 
@@ -426,6 +450,10 @@ publicar sin llevarse nada:
 
 Se mueve entero con `BCA_HOME`. Una instalacion que ya tenia `./data` la sigue
 usando: cambiarla de lugar romperia las rutas de las piezas ya generadas.
+
+En el servidor con Docker esas carpetas se montan desde el repo —`data/`,
+`content/` y `projects/`, las tres git-ignored— para que el respaldo sea una sola
+carpeta y sobrevivan a cada redeploy.
 
 ## El equipo
 
