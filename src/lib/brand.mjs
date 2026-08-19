@@ -104,6 +104,7 @@ export async function createBrand(cfg, store, opts = {}) {
     name: opts.name,
     colors: opts.colors,
     deps,
+    store,
   });
 
   const id = slugify(opts.id || identity.id || identity.name || opts.name || site?.host || "marca");
@@ -160,6 +161,7 @@ export async function reviseBrand(cfg, store, id, feedback, opts = {}) {
     current: actual,
     hints: pedido,
     deps,
+    store,
   });
 
   const warnings = [];
@@ -565,6 +567,44 @@ export function renderReferenceComposition(brand) {
     total: 1,
     slots: sampleSlots("hero"),
   });
+}
+
+/**
+ * Le pide al modelo la identidad de una marca: paleta, tipografias, voz, que no
+ * decir. Es UNA llamada JSON, y es la unica del flujo de marca.
+ *
+ * El prompt lo arma `buildIdentityPrompt`, que ya sabe si esto es una marca
+ * nueva o la revision de una que existe. Lo que vuelve lo termina de acomodar
+ * `normalizeIdentity` —rellena lo que falte, arregla los hex, garantiza
+ * contraste— asi que aca solo se comprueba que haya vuelto un objeto.
+ */
+export async function proposeIdentity(cfg, { site, current, hints, name, colors, deps, store } = {}) {
+  const pedirJSON = deps?.runModeloJSON ?? runModeloJSON;
+  const prompt = buildIdentityPrompt({ site, current, hints, name, colors });
+
+  const res = await pedirJSON(prompt, {
+    // La identidad se decide una vez por marca y despues manda sobre todo lo
+    // que se genere: va al modelo del brief, no al mas barato que haya.
+    model: cfg?.models?.brand ?? cfg?.models?.brief,
+    timeoutMs: cfg?.limits?.modelTimeoutMs,
+  });
+
+  store?.logRun?.({
+    kind: "marca",
+    model: res.model,
+    costUsd: res.costUsd,
+    ms: res.ms,
+    ok: true,
+    detail: current ? `revision de ${current.id}` : `alta${site?.host ? ` desde ${site.host}` : ""}`,
+  });
+
+  const identity = res.data;
+  if (!identity || typeof identity !== "object" || Array.isArray(identity)) {
+    throw new BrandError(
+      "el modelo no devolvio una identidad: se esperaba un objeto JSON con name, palette y fonts",
+    );
+  }
+  return { identity, costUsd: res.costUsd ?? 0 };
 }
 
 export function buildIdentityPrompt({ site, current, hints, name, colors } = {}) {
