@@ -42,6 +42,7 @@ const ETIQUETA_FASE = {
   brief: "escribiendo el brief",
   compose: "componiendo escenas",
   check: "revisando el layout",
+  repair: "reparando lo que marcó el check",
   render: "renderizando",
   plan: "planificando",
   marca: "armando la marca",
@@ -396,7 +397,7 @@ ${
 // Pieza
 // ---------------------------------------------------------------------------
 
-export function vistaItem({ item, brand, estado, media, cfg, hayTelegram = false, fallo = null, previa = null }) {
+export function vistaItem({ item, brand, estado, media, cfg, hayTelegram = false, fallo = null, previa = null, bitacora = [] }) {
   const generando = estado.kind === "running";
   // Quedo en `building` pero no hay nadie generandola: el proceso murio (stale)
   // o se fue sin dejar rastro del trabajo (orphan). Decir "generando" ahi es
@@ -426,6 +427,7 @@ ${
 }
 ${detenido ? bloqueDetenido({ item, estado, fallo }) : ""}
 ${item.error ? `<div class="aviso mal"><strong>Último intento:</strong> ${esc(item.error)}</div>` : ""}
+${bloqueBitacora({ item, bitacora, generando, detenido })}
 
 <div class="grid dos">
   <div>
@@ -481,6 +483,45 @@ ${
        <pre class="bloque mono" style="margin-top:12px">${esc(item.brief)}</pre></details>`
     : ""
 }`;
+}
+
+/**
+ * La bitácora de la última generación: lo mismo que se ve en la consola, línea
+ * por línea y con su nivel, para que quien usa el panel sepa qué falló, qué se
+ * reparó y por qué se detuvo. En vivo mientras corre (el JS de `data-vivo`
+ * agrega las líneas nuevas que trae `/api/estado`) y persistente después.
+ *
+ * Abierta cuando hay algo pasando o algo salió mal; plegada cuando la pieza
+ * salió bien y la bitácora es solo historia.
+ */
+function bloqueBitacora({ item, bitacora, generando, detenido }) {
+  if (!bitacora.length && !generando) return "";
+  const abierta = generando || detenido || Boolean(item.error) || item.status === "planned";
+  const errores = bitacora.filter((l) => l.nivel === "error").length;
+  const ultimo = bitacora.at(-1)?.id ?? 0;
+  return `<details class="card"${abierta ? " open" : ""}>
+  <summary class="mini dim">bitácora de la última generación${errores ? ` · <span class="err">${errores} error${errores === 1 ? "" : "es"}</span>` : ""}${generando ? " · en vivo" : ""}</summary>
+  <p class="mini faint" style="margin:8px 0 6px">
+    <span class="nivel-error">■</span> bloqueante: impide renderizar &nbsp;
+    <span class="nivel-aviso">■</span> cosmético: el check pasa igual &nbsp;
+    <span class="nivel-info">■</span> avance
+  </p>
+  <pre class="bloque bitacora" data-log data-log-desde="${ultimo}">${bitacora.map(lineaBitacora).join("")}</pre>
+</details>`;
+}
+
+export function lineaBitacora(l) {
+  const nivel = l.nivel === "error" || l.nivel === "aviso" ? l.nivel : "info";
+  return `<div class="linea nivel-${nivel}"><span class="hora">${esc(horaCorta(l.created_at))}</span>${esc(l.texto)}</div>`;
+}
+
+/** "HH:MM:SS" de un datetime de SQLite (UTC), en hora local. */
+function horaCorta(iso) {
+  if (!iso) return "";
+  const s = String(iso);
+  const d = new Date(s.includes("T") ? s : `${s.replace(" ", "T")}Z`);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toTimeString().slice(0, 8);
 }
 
 /**

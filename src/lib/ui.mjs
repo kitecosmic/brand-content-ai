@@ -633,6 +633,19 @@ th:last-child,td:last-child{padding-right:0}
   word-break:break-word;color:var(--muted);
 }
 
+/* --- bitacora de una pieza -------------------------------------------- */
+/* Lo bloqueante se distingue a simple vista de lo cosmetico, igual que en el
+   prompt que le llega al modelo. */
+.bitacora{max-height:360px}
+.bitacora .linea{padding:1px 0}
+.bitacora .hora{color:var(--hint);margin-right:10px;user-select:none}
+.bitacora .nivel-error{color:var(--err);font-weight:600}
+.bitacora .nivel-aviso{color:var(--warn)}
+.bitacora .nivel-info{color:var(--muted)}
+.nivel-error{color:var(--err)}
+.nivel-aviso{color:var(--warn)}
+.nivel-info{color:var(--muted)}
+
 /* --- calendario --------------------------------------------------------- */
 .cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
 .dow{
@@ -787,14 +800,42 @@ const JS = `
   });
 
   // --- trabajo en curso: la pagina se actualiza sola -----------------------
+  // La bitacora vive fuera de la caja: es la misma pieza, otra tarjeta. Se le
+  // pide al server solo lo posterior a la ultima linea que ya se ve.
+  var bitacora = document.querySelector("[data-log]");
+  function horaDe(iso){
+    if (!iso) return "";
+    var d = new Date(iso.indexOf("T") >= 0 ? iso : iso.replace(" ", "T") + "Z");
+    return isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 8);
+  }
+  function agregarLineas(lineas){
+    if (!bitacora || !lineas || !lineas.length) return;
+    var abajo = bitacora.scrollTop + bitacora.clientHeight >= bitacora.scrollHeight - 8;
+    lineas.forEach(function(l){
+      var div = document.createElement("div");
+      div.className = "linea nivel-" + (l.nivel === "error" || l.nivel === "aviso" ? l.nivel : "info");
+      var hora = document.createElement("span");
+      hora.className = "hora";
+      hora.textContent = horaDe(l.created_at);
+      div.appendChild(hora);
+      div.appendChild(document.createTextNode(l.texto));
+      bitacora.appendChild(div);
+      bitacora.setAttribute("data-log-desde", String(l.id));
+    });
+    if (abajo) bitacora.scrollTop = bitacora.scrollHeight;
+  }
+  if (bitacora) bitacora.scrollTop = bitacora.scrollHeight;
+
   document.querySelectorAll("[data-vivo]").forEach(function(caja){
     var url = caja.getAttribute("data-vivo");
     var fallos = 0;
     var timer = setInterval(function(){
-      fetch(url, {headers:{accept:"application/json"}})
+      var desde = bitacora ? (bitacora.getAttribute("data-log-desde") || "0") : "0";
+      fetch(url + (url.indexOf("?") >= 0 ? "&" : "?") + "desde=" + encodeURIComponent(desde), {headers:{accept:"application/json"}})
         .then(function(r){ return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
         .then(function(j){
           fallos = 0;
+          agregarLineas(j.log);
           if (j.recargar){ clearInterval(timer); location.reload(); return; }
           caja.querySelectorAll("[data-campo]").forEach(function(el){
             var v = j[el.getAttribute("data-campo")];

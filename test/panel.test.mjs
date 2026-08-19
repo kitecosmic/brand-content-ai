@@ -390,3 +390,27 @@ test("hay una forma visible de cerrar sesion", async () => {
   assert.equal(salida.headers.get("location"), "/login");
   assert.match(salida.headers.get("set-cookie") ?? "", /bca_sesion=;/, "y la cookie se limpia");
 });
+
+test("la bitacora de la pieza se ve en el panel, y /api/estado trae solo las lineas nuevas", async () => {
+  const id = "2026-11-01-quedo-a-medias";
+  store.addLog(id, "info", "compose: 6 escena(s) por escribir");
+  store.addLog(id, "error", "check fallo: 1 error(es) bloqueante(s) y 11 aviso(s) cosmetico(s)");
+  store.addLog(id, "aviso", "    [warning] contrast_aa_failure cosmetico");
+  const [primera, , tercera] = store.logsDe(id);
+
+  const html = await (await get(`/item/${id}`, cookie)).text();
+  assert.match(html, /bitácora de la última generación/);
+  assert.match(html, /class="linea nivel-error"[^>]*>.*check fallo: 1 error\(es\) bloqueante/, "lo bloqueante se distingue");
+  assert.match(html, /class="linea nivel-aviso"[^>]*>.*contrast_aa_failure/, "lo cosmetico tambien");
+  assert.match(html, new RegExp(`data-log-desde="${tercera.id}"`), "la pagina sabe cual fue la ultima linea que vio");
+  assert.match(html, /1 error<\/span>/);
+
+  // Lo que la pagina ya tiene no se vuelve a mandar.
+  const r = await get(`/api/estado/${id}?desde=${primera.id}`, cookie);
+  const d = await r.json();
+  assert.equal(d.log.length, 2);
+  assert.equal(d.log[0].nivel, "error");
+  assert.equal(d.ultimoLog, tercera.id);
+  const todo = await (await get(`/api/estado/${id}`, cookie)).json();
+  assert.equal(todo.log.length, 3);
+});

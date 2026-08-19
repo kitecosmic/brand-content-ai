@@ -241,7 +241,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       );
     }
     if (req.method === "GET" && ruta.startsWith("/api/estado/")) {
-      return apiEstado(res, ruta.slice("/api/estado/".length));
+      return apiEstado(res, ruta.slice("/api/estado/".length), { desde: url.searchParams.get("desde") });
     }
 
     if (req.method === "POST") {
@@ -705,6 +705,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         cfg,
         hayTelegram: telegramConfigurado(loadConfig()),
         fallo: store.ultimoFallo(item.id),
+        bitacora: store.logsDe(item.id),
       }),
       "calendario",
     );
@@ -1129,18 +1130,23 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   // Estado
   // -------------------------------------------------------------------------
 
-  function apiEstado(res, rawId) {
+  function apiEstado(res, rawId, { desde } = {}) {
     const item = store.getItem(decodeURIComponent(rawId));
     if (!item) {
       return enviar(res, 404, "application/json; charset=utf-8", JSON.stringify({ error: "no existe" }));
     }
     const estado = estadoDe(item);
+    // Solo las lineas de bitacora que la pagina todavia no tiene: la pagina
+    // manda el id de la ultima que vio y recibe lo que vino despues.
+    const log = store.logsDe(item.id, { desde: Number(desde) || 0, limit: 200 });
     return enviar(
       res,
       200,
       "application/json; charset=utf-8",
       JSON.stringify({
         estado: item.status,
+        log,
+        ultimoLog: log.at(-1)?.id ?? (Number(desde) || 0),
         estadoTexto:
           item.status === "building" && estado.kind !== "running"
             ? "detenido"

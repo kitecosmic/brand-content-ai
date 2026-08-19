@@ -169,7 +169,26 @@ CREATE TABLE IF NOT EXISTS runs (
   detail     TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Bitacora de una pieza, linea por linea: lo mismo que se ve en la consola
+-- cuando se genera desde una terminal.
+--
+-- Existe porque el panel es la forma normal de usar esto y desde el panel no se
+-- veia nada de la corrida: ni que fallo el check, ni que se reparo, ni por que
+-- se detuvo. La informacion existia (salia por consola) y no llegaba. nivel
+-- distingue lo bloqueante (error) de lo cosmetico (aviso), igual que en el
+-- prompt que le llega al modelo.
+CREATE TABLE IF NOT EXISTS logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id    TEXT NOT NULL,
+  nivel      TEXT NOT NULL DEFAULT 'info',   -- info | aviso | error
+  texto      TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_logs_item ON logs(item_id, id);
 `;
+
+const NIVELES = new Set(["info", "aviso", "error"]);
 
 export const STATUSES = [
   "planned",
@@ -502,6 +521,7 @@ export class Store {
   /** Borra un item y su historial. El entregable en disco no se toca. */
   deleteItem(id) {
     this.db.prepare(`DELETE FROM revisions WHERE item_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM logs WHERE item_id = ?`).run(id);
     const info = this.db.prepare(`DELETE FROM items WHERE id = ?`).run(id);
     return info.changes > 0;
   }
@@ -777,6 +797,45 @@ export class Store {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(kind, itemId, model, costUsd, ms, ok ? 1 : 0, detail);
+  }
+
+  // ---- bitacora por pieza ------------------------------------------------
+
+  /** Una linea de la bitacora de una pieza. `nivel`: info | aviso | error. */
+  addLog(itemId, nivel, texto) {
+    this.db
+      .prepare(`INSERT INTO logs (item_id, nivel, texto) VALUES (?, ?, ?)`)
+      .run(itemId, NIVELES.has(nivel) ? nivel : "info", String(texto ?? "").slice(0, 2000));
+  }
+
+  /**
+   * La bitacora de una pieza, en orden. `desde` devuelve solo lo posterior a
+   * ese id: es lo que usa el panel para traer las lineas nuevas mientras corre.
+   */
+  logsDe(itemId, { desde = 0, limit = 1000 } = {}) {
+    return this.db
+      .prepare(
+        `SELECT id, nivel, texto, created_at FROM logs
+         WHERE item_id = ? AND id > ? ORDER BY id ASC LIMIT ?`,
+      )
+      .all(itemId, Number(desde) || 0, Math.max(1, Number(limit) || 1000));
+  }
+
+  /**
+   * Deja solo las ultimas `keep` lineas de una pieza. Una pieza que se regenera
+   * varias veces acumula bitacora; lo viejo no le sirve a nadie y crece sin tope.
+   */
+  pruneLogs(itemId, keep = 600) {
+    this.db
+      .prepare(
+        `DELETE FROM logs WHERE item_id = ? AND id NOT IN (
+           SELECT id FROM logs WHERE item_id = ? ORDER BY id DESC LIMIT ?)`,
+      )
+      .run(itemId, itemId, Math.max(0, Number(keep) || 0));
+  }
+
+  clearLogs(itemId) {
+    this.db.prepare(`DELETE FROM logs WHERE item_id = ?`).run(itemId);
   }
 
   costSummary(sinceDays = 30) {
