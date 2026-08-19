@@ -41,17 +41,34 @@ crece el primer mes y borrá los viejos si hace falta.
 
 ## Instalación
 
-**1. Docker.** En Ubuntu:
+**1. El sistema al día.** En una VPS recién creada, lo primero:
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git
+sudo apt autoremove -y
+```
+
+Si `upgrade` tocó el kernel, Ubuntu deja una marca y conviene reiniciar antes de
+seguir:
+
+```bash
+[ -f /var/run/reboot-required ] && sudo reboot
+```
+
+**2. Docker.** El instalador oficial deja el engine y `docker compose`:
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker "$USER"   # y volvé a entrar por SSH
+sudo usermod -aG docker "$USER"
+exit    # salí y volvé a entrar por SSH: el grupo toma efecto al iniciar sesión
 ```
 
-Si el instalador todavía no publica paquetes para tu versión de Ubuntu, los de la
+Al volver, `docker run --rm hello-world` tiene que andar sin `sudo`. Si el
+instalador todavía no publica paquetes para tu versión de Ubuntu, los de la
 distro alcanzan: `sudo apt install -y docker.io docker-compose-v2`.
 
-**2. El proyecto y sus secretos.**
+**3. El proyecto y sus secretos.**
 
 ```bash
 git clone https://github.com/kitecosmic/brand-content-ai.git
@@ -66,7 +83,7 @@ redeploy cierra las sesiones abiertas del panel.
 `TZ` tiene que coincidir con `calendar.timezone` del config. La hora de
 publicación es hora local, y un servidor recién instalado está en UTC.
 
-**3. Levantarlo.**
+**4. Levantarlo.**
 
 ```bash
 ./deploy.sh
@@ -76,7 +93,7 @@ La primera vez tarda unos minutos: construye la imagen, instala Chrome y precarg
 la CLI de HyperFrames. Los redeploys siguientes reusan todo eso y solo rehacen la
 capa del código.
 
-**4. Crear tu cuenta.** El panel escucha en `127.0.0.1:4317` del servidor y **se
+**5. Crear tu cuenta.** El panel escucha en `127.0.0.1:4317` del servidor y **se
 niega a publicarse solo**, así que la primera vez entrás por un túnel SSH desde
 tu máquina:
 
@@ -87,7 +104,7 @@ ssh -L 4317:127.0.0.1:4317 usuario@tu-servidor
 Y abrís `http://127.0.0.1:4317` en tu navegador: te pide crear la cuenta dueña.
 Desde ahí cargás la marca (tab Marcas, con la URL de tu sitio) y sincronizás.
 
-**5. Verificar.**
+**6. Verificar.**
 
 ```bash
 docker compose exec -u node panel node --disable-warning=ExperimentalWarning src/cli.mjs doctor
@@ -112,7 +129,7 @@ panel.tudominio.com {
 El panel ya lee `x-forwarded-proto`, así que los redirects salen bien. En el
 firewall: 22, 80 y 443, nada más — el 4317 nunca se abre hacia afuera.
 
-Si preferís no exponerlo, el túnel SSH del paso 4 sirve para siempre.
+Si preferís no exponerlo, el túnel SSH del paso 5 sirve para siempre.
 
 ## Mantenimiento
 
@@ -127,12 +144,15 @@ docker compose down              # bajar todo (los datos quedan)
 Los reinicios por caída los maneja Docker (`restart: unless-stopped`), y el panel
 tiene healthcheck: `docker compose ps` te dice si está sano.
 
-Cada tanto conviene traer los parches de seguridad de la imagen base y limpiar
-las capas que quedaron sueltas de los redeploys, que ocupan disco:
+Cada tanto conviene traer los parches de seguridad de la imagen base y limpiar lo
+que dejan los redeploys, que es lo que de verdad come disco: cada build deja una
+imagen sin tag y una tanda de capas en la caché.
 
 ```bash
+docker system df                 # cuanto ocupa cada cosa
 docker compose build --pull && docker compose up -d
-docker image prune -f
+docker image prune -f            # imagenes viejas de redeploys anteriores
+docker builder prune -f          # la cache de build, que es la que mas crece
 ```
 
 **Respaldo.** Lo importante es `data/` (incluye la base con las API keys) y

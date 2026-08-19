@@ -75,14 +75,32 @@ npm run web        # http://127.0.0.1:4317
 HyperFrames ya instalados y fijados: el render los necesita y en una máquina
 recién instalada no están. Lo único que hace falta en el servidor es Docker.
 
+De una VPS Ubuntu recién creada a la primera pieza, entrando por SSH:
+
 ```bash
+# 1. el sistema al día
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git
+
+# 2. Docker (el instalador oficial deja también docker compose)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+exit    # salí y volvé a entrar: el grupo docker toma efecto al iniciar sesión
+```
+
+```bash
+# 3. el proyecto
 git clone https://github.com/kitecosmic/brand-content-ai
 cd brand-content-ai
-cp .env.example .env      # o dejalo vacío y cargá todo desde Ajustes
+cp .env.example .env
+nano .env    # la API key de MiniMax y TZ; o dejalo vacío y cargá todo desde Ajustes
 ./deploy.sh
 ```
 
-Eso deja andando el panel (con el bot, si configurás Telegram) y el ciclo diario.
+La primera corrida de `deploy.sh` construye la imagen y tarda unos minutos —baja
+Chrome y las tipografías—; las siguientes reusan todo eso. Al terminar deja
+andando el panel (con el bot, si configurás Telegram) y el ciclo diario.
+
 El panel escucha en `127.0.0.1:4317` del servidor y **no se publica solo**, así
 que la primera vez entrás por un túnel SSH desde tu máquina:
 
