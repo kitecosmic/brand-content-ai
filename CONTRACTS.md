@@ -130,6 +130,11 @@ runModeloJSON(prompt, opts)   // igual, mas { data } ya parseado; reintenta 1 ve
 // agregado, listo para seguir. Mismo costo, reintentos y timeout.
 runModeloChat(mensajes, opts)
 
+// Bloques de imagen para el contenido de un mensaje, y el historial sin ellos
+// (marcador de texto en su lugar): una foto sirve en la vuelta en que se manda.
+imagenPng(bufferOBase64, mediaType?) -> { type: "image", source: {...} }
+sinImagenes(mensajes) -> mensajes
+
 // El contenido de un mensaje del usuario con archivos inlineados adelante. Con
 // { cache: true } devuelve dos bloques y el de archivos lleva
 // cache_control: { type: "ephemeral" } — para conversaciones que repiten un
@@ -183,6 +188,29 @@ contraste; arreglarlo una vez en la marca evita que cada pieza pelee lo mismo.
 **Proyecto base:** `<projectsDir>/_marcas/<id>/` con `frame.md`,
 `hyperframes.json`, `assets/fonts/brand.css` (base64) y
 `.bca/reference.html`. `ensureProject` lo clona por pieza.
+
+### `src/lib/layouts.mjs`
+
+```js
+LAYOUT_IDS                                  // hero, statement, stat, split, cues, steps, cta
+layoutCatalog() -> string                   // para el prompt del planificador
+validateSlots(id, slots) -> string[]        // problemas; vacio si esta bien
+renderLayout(id, { brand, width, height, scene, total, slots, vertical }) -> html
+tonos(palette, register) -> { ground, surface, ink, muted, hint, line, accent, accentText, onAccent }
+ajustarTexto(text, { maxWidth, maxPx, minPx, maxLines, ... }) -> { px, lines }
+pantallaCompleta(width, height) -> boolean  // 9:16 o mas alto: safe area de la app
+sampleSlots(id) -> slots de muestra
+```
+
+Los layouts NO traen colores ni familias propias: todo sale del `brand`
+(paleta normalizada + fuentes) y las medidas del lienzo (1u = 1% del ancho,
+el `cqw` de frame.md). El registro (dark/light) por escena invierte tierra y
+tinta y re-deriva los intermedios con contraste garantizado (`tonos`). El
+texto se parte en lineas explicitas sin romper palabras (`ajustarTexto`), y
+el HTML cumple HARD_RULES: timeline unica pausada, gsap.set inmediato, solo
+transforms/opacity, una regla que crece durante todo el hold, ids estables,
+marcador de fuentes. Un layout nuevo se agrega aca y aparece solo en el
+catalogo del planificador.
 
 ### `src/lib/site.mjs`
 
@@ -305,13 +333,29 @@ Fases, marcando estado en cada una:
      `cfg.hyperframes.projectsDir`. Reusar el proyecto de referencia
      (`cfg.hyperframes.referenceProject`) como fuente del `frame.md` de marca —
      copiarlo, no regenerarlo.
-   - `compose` y `repair` corren contra el backend; el modelo NO tiene acceso
-     a tools de filesystem: los callers inlinan los archivos relevantes via
-     `opts.files` y parsean la respuesta con `extractCompositions` para
-     escribir los HTML en disco. Lo que se inlinea va SIN las fuentes en base64
-     (`stripEmbeddedFonts`, marcador `FONT_MARKER`) y despues de cada
-     reparacion se vuelve a llamar `applyFonts`: mandar los 140 KB de base64
-     hacia que el modelo intentara transcribirlos y se cortara a mitad.
+   - `compose` es UNA llamada JSON (`buildLayoutPlanPrompt` /
+     `parseLayoutPlan`): el modelo elige un layout de `layouts.mjs` por
+     escena y rellena sus huecos con el copy del brief; `renderLayout` escribe
+     el HTML. El modelo no escribe HTML de escena. Los layouts son agnosticos
+     de marca: paleta y tipografias salen del `brand`, las medidas del lienzo.
+     El plan queda en `.bca/layout-plan.json`.
+   - `repair` (del linter o de la revision visual) si edita HTML: corre contra
+     el backend con los archivos inlinados via `opts.files` (el modelo NO
+     tiene tools de filesystem) y parsea la respuesta con `extractCompositions`.
+     Lo que se inlinea va SIN las fuentes en base64 (`stripEmbeddedFonts`,
+     marcador `FONT_MARKER`) y despues de cada reparacion se vuelve a llamar
+     `applyFonts`: mandar los 140 KB de base64 hacia que el modelo intentara
+     transcribirlos y se cortara a mitad.
+   - Revision visual (`reviewAndRepair`), despues de que el check pasa: se
+     fotografian todas las escenas (`snapshot --at`), `buildReviewMessage`
+     manda cada foto (`imagenPng`) con el copy esperado al modelo de vision
+     (`cfg.models.review`) y `parseReview` normaliza el veredicto. Si hay
+     observaciones, `buildVisualRepairPrompt` + la foto de esa escena van a la
+     conversacion de reparacion; lo reescrito vuelve a pasar por `checkAndRepair`
+     y se fotografia de nuevo. Hasta `limits.reviewTurns` (2); agotarlas NO
+     falla la pieza. Las imagenes viajan solo en el mensaje de su vuelta:
+     `sinImagenes` deja un marcador en el historial. Los stills se entregan
+     desde la ultima tanda de fotos.
    - Renderizar con `npx hyperframes@<cliVersion>`; para imagen/carrusel usar
      `snapshot`, para video `render`.
 3. `built` — `asset_path` al entregable y `preview_path` a una imagen (para

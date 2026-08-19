@@ -36,7 +36,8 @@ import {
 } from "node:fs";
 import { join, sep, dirname, relative } from "node:path";
 
-import { conArchivos, extractJSON, runModelo, runModeloChat, runModeloJSON } from "./modelo.mjs";
+import { conArchivos, extractJSON, imagenPng, runModeloChat, runModeloJSON, sinImagenes } from "./modelo.mjs";
+import { LAYOUT_IDS, layoutCatalog, pantallaCompleta, renderLayout, validateSlots } from "./layouts.mjs";
 import { META_DIR, rutaMeta, slugify } from "./config.mjs";
 
 
@@ -80,6 +81,10 @@ export const DEFAULT_REPAIR_TOKEN_BUDGET = 600_000;
 export const VISTAS_PARA_RECOMPONER = 3;
 export const VISTAS_PARA_CORTAR = 4;
 
+// Vueltas de revision visual (fotografiar, mirar, reparar con la foto) cuando
+// la config no dice otra cosa (limits.reviewTurns). 0 apaga la revision.
+export const DEFAULT_REVIEW_TURNS = 2;
+
 const GSAP_FALLBACK_TAG =
   '<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" crossorigin="anonymous"></script>';
 
@@ -105,7 +110,6 @@ export class GenerateError extends Error {
 
 export function defaultDeps() {
   return {
-    runModelo,
     runModeloChat,
     runModeloJSON,
     hyperframes: runHyperframes,
@@ -182,26 +186,6 @@ function clamp(n, lo, hi) {
 }
 
 /** Concurrencia acotada, preservando el orden de los resultados. */
-/** Llamadas de compose en paralelo cuando no hay tope configurado. */
-export const DEFAULT_SCENE_CONCURRENCY = 3;
-
-/**
- * Cuantas escenas componer a la vez.
- *
- * Cuando cada llamada era un proceso aparte (~350 MB de RSS) el limite real era la
- * RAM de la maquina, y se calculaba con freemem(). Con el backend HTTP una
- * llamada es un fetch: no ocupa memoria digna de mencion y lo que se satura son
- * los limites del proveedor. Atarlo a la RAM libre solo servia para componer en
- * serie en una maquina cargada, sin ganar nada.
- *
- * Manda `configured` (limits.maxConcurrentScenes); sin el, un default sobrio.
- */
-export function sceneConcurrency({ scenes, configured } = {}) {
-  const total = Math.max(1, Number(scenes) || 1);
-  const cap = Number(configured) > 0 ? Number(configured) : DEFAULT_SCENE_CONCURRENCY;
-  return Math.max(1, Math.min(total, cap));
-}
-
 export async function mapLimit(items, limit, fn) {
   const list = [...items];
   const n = Math.max(1, Math.floor(Number(limit) || 1));
@@ -390,15 +374,6 @@ export function pickPreviewTime(brief, plan) {
 // ---------------------------------------------------------------------------
 // Prompts
 // ---------------------------------------------------------------------------
-
-/** La familia de display de la marca; sin marca, la del proyecto de referencia. */
-function displayFamily(brand) {
-  return brand?.fonts?.display?.family ?? "Bricolage Grotesque";
-}
-
-function monoFamily(brand) {
-  return brand?.fonts?.mono?.family ?? "JetBrains Mono";
-}
 
 function brandBlock(brand) {
   const b = brand ?? {};
@@ -642,230 +617,212 @@ export function injectFonts(html, fontCss) {
   return html.slice(0, at) + "\n" + fontCss + "\n" + html.slice(at);
 }
 
-function skeleton(width, height, brand) {
-  return [
-    "<template>",
-    "  <style>",
-    `    ${FONT_MARKER}`,
-    "    #root {",
-    "      position: absolute; inset: 0;",
-    `      width: ${width}px; height: ${height}px;`,
-    "      overflow: hidden; container-type: size;",
-    `      font-family: "${displayFamily(brand)}", sans-serif; color: ${brand?.palette?.ink ?? "#E8EDDF"};`,
-    "    }",
-    "    .xx-ground { position: absolute; inset: 0; background: #0C0F08; }",
-    "    .xx-stage  { position: absolute; inset: 0; }",
-    "  </style>",
-    "",
-    '  <div id="root" data-composition-id="<ID>" data-start="0" data-duration="<D>"',
-    `       data-width="${width}" data-height="${height}">`,
-    '    <div id="xx-ground" class="clip xx-ground" data-start="0" data-duration="<D>" data-track-index="0"></div>',
-    '    <div id="xx-stage" class="clip xx-stage"  data-start="0" data-duration="<D>" data-track-index="1">',
-    "      <!-- the shot -->",
-    "    </div>",
-    "  </div>",
-    "",
-    "  <script>",
-    "    window.__timelines = window.__timelines || {};",
-    "    (function () {",
-    "      var tl = gsap.timeline({ paused: true });",
-    '      gsap.set("#xx-line", { opacity: 0, y: 28 });',
-    '      tl.to("#xx-line", { opacity: 1, y: 0, duration: 0.62, ease: "power3.out" }, 0.15);',
-    '      window.__timelines["<ID>"] = tl;',
-    "    })();",
-    "  </script>",
-    "</template>",
-  ].join("\n");
-}
+// ---------------------------------------------------------------------------
+// Compose: elegir un layout por escena y rellenar sus huecos
+// ---------------------------------------------------------------------------
+//
+// El modelo NO escribe HTML de escena. Elige, para cada escena, uno de los
+// layouts prefabricados de layouts.mjs y dice que va en cada hueco (kicker,
+// display, cues, stat...) usando el copy del brief; el codigo renderiza. Es el
+// reparto que ya rige para la marca ("el modelo decide los valores, el codigo
+// arma el archivo") llevado a la escena: cuando el modelo escribia 300 lineas
+// de HTML+GSAP a ciegas salian palabras partidas, mitades vacias, numeros que
+// no aparecian. La maquetacion ya esta resuelta una vez, para todas las marcas.
 
-/**
- * Lo que cambia cuando el lienzo es vertical y se ve a pantalla completa.
- *
- * Las apps dibujan su interfaz ENCIMA de la historia: arriba el avatar y el
- * nombre, abajo la barra de responder y el "desliza hacia arriba". Un titular
- * pegado al borde queda tapado por la propia app, y eso no lo detecta ningun
- * linter: hay que componer para la franja del medio.
- */
-function verticalBlock(formatCfg) {
-  if (!esVertical(formatCfg)) return "";
-  const { width, height } = parseAspect(formatCfg.aspect);
-  const arriba = Math.round(height * 0.14);
-  const abajo = Math.round(height * 0.2);
-  return [
-    "",
-    "# Vertical, a pantalla completa",
-    `- SAFE AREA: nada legible arriba de y=${arriba}px ni abajo de y=${height - abajo}px.`,
-    "  Instagram, WhatsApp y Facebook dibujan su interfaz ahi (avatar, nombre, barra de respuesta).",
-    "  El fondo si puede llegar a los bordes; el texto y los datos, no.",
-    `- La zona viva es el centro: de y=${arriba} a y=${height - abajo}, ${height - arriba - abajo}px de alto.`,
-    "  Ahi va todo, y ahi tiene que llenarse el ancho: nada de una columna flaca al medio.",
-    "- EL TITULAR MANDA. Es lo primero que se lee y ocupa el tercio superior de la zona viva,",
-    "  a todo el ancho, 3 a 5 veces mas grande que cualquier otro texto de la pieza. Si el",
-    "  titular no se lee a un metro de distancia, la historia no sirve.",
-    "- TRES BLOQUES COMO MAXIMO: el titular, una linea de apoyo y UN elemento de prueba",
-    "  (una terminal, un dato, una lista de tres). Cuatro bloques ya es un folleto.",
-    "- Nada de aire muerto: si entre dos bloques hay mas de un 8% del alto vacio, algo esta mal",
-    "  compuesto. Se agranda el titular o se sube el bloque de prueba.",
-    "- Ningun elemento decorativo (circulos, barras, marcas) puede quedar encima de texto.",
-    "- Se ve en una mano, a un brazo de distancia y con el pulgar listo para saltear: UN mensaje.",
-    `- El lienzo es ${width}x${height}: componelo vertical de verdad, no un 16:9 con bandas.`,
-    "",
-  ].join("\n");
-}
-
-function sceneCopyBlock(format, brief, plan) {
+/** El copy de cada escena, tal como lo fijo el brief, para el planificador. */
+function sceneCopyBlock(format, brief, plan, scenes) {
   const lines = [];
-  for (const s of plan.scenes) {
+  for (const s of scenes) {
     const src =
       plan.kind === "slides"
         ? asArray(brief.slides)[s.index] ?? {}
         : plan.kind === "motion"
           ? asArray(brief.scenes)[s.index] ?? {}
           : brief;
-    lines.push(
-      `### ${s.compId}  —  file: ${s.file}`,
-      `- data-composition-id: ${s.compId}`,
-      `- data-start: 0`,
-      `- data-duration: ${s.duration}   (the scene's own content resolves within ${s.hold}s)`,
-      `- data-width: ${plan.width}   data-height: ${plan.height}`,
-      `- register: ${str(src.register) || "dark"}`,
-    );
-    if (src.kicker) lines.push(`- kicker (mono, uppercase, 0.14em): ${str(src.kicker)}`);
-    if (src.display_line) lines.push(`- display line (the one big moment): ${str(src.display_line)}`);
+    lines.push(`### scene ${s.index + 1} of ${plan.scenes.length} — file: ${s.file}`);
+    lines.push(plan.kind === "motion" ? `- on screen for ${s.hold}s` : "- a still frame");
+    lines.push(`- suggested register: ${str(src.register) || "dark"}`);
+    if (src.kicker) lines.push(`- kicker: ${str(src.kicker)}`);
+    if (src.display_line) lines.push(`- display line: ${str(src.display_line)}`);
     if (src.support_line) lines.push(`- support line: ${str(src.support_line)}`);
-    if (src.accent_word) lines.push(`- lime accent on the word: ${str(src.accent_word)}`);
+    if (src.accent_word) lines.push(`- accent word: ${str(src.accent_word)}`);
     if (src.title) lines.push(`- scene: ${str(src.title)}`);
+    if (src.role) lines.push(`- role in the arc: ${str(src.role)}`);
     const cues = asArray(src.on_screen).map(str).filter(Boolean);
     if (cues.length) {
-      lines.push("- on-screen cues, IN ORDER — each one gets its own beat, none appears before its cue:");
+      lines.push("- on-screen cues, IN ORDER:");
       for (const c of cues) lines.push(`    * ${c}`);
     }
     if (src.note) lines.push(`- direction: ${str(src.note)}`);
+    if (s.focal) lines.push("- FOCAL scene: the moment the piece is about");
     lines.push("");
   }
   return lines.join("\n");
 }
 
 /**
- * Que archivos es dueno esta llamada y como se lo decimos.
- *
- * `only` puede ser UNA escena (modo historico, una llamada por archivo) o un
- * ARRAY de escenas (modo lote: una llamada escribe varias composiciones, para
- * amortizar los ~30k tokens de contexto que cada llamada reenvia).
+ * Lo que la pieza dice ademas de estas escenas, en una linea por escena, para
+ * que una recomposicion parcial no repita el layout de la vecina.
  */
-function ownershipBlock(only, plan) {
-  const scenes = Array.isArray(only) ? only : only ? [only] : plan.scenes;
-  const n = plan.scenes.length;
-  const idx = (s) => plan.scenes.indexOf(s) + 1;
-  if (scenes.length === 1) {
-    const s = scenes[0];
-    return [
-      `Write exactly ONE file: ${s.file} (composition id: ${s.compId}, data-duration ${s.duration}).`,
-      `It is scene ${idx(s)} of ${n}; the rest are listed further down only so the piece reads as one story.`,
-      "Do not write or touch the other files — another pass owns them.",
-    ].join("\n");
-  }
+function otrasEscenasBlock(brief, plan, scenes, layoutPlan = {}) {
+  const otras = plan.scenes.filter((s) => !scenes.includes(s));
+  if (!otras.length) return [];
   return [
-    `Write exactly ${scenes.length} files, listed below, under compositions/frames/ in the current directory.`,
-    `They are scenes ${scenes.map(idx).join(", ")} of ${n}; the rest are listed further down only`,
-    "so the piece reads as one story. Do not write or touch the other files — another pass owns them.",
-    ...scenes.map((s) => `- ${s.file}  (composition id: ${s.compId}, data-duration ${s.duration})`),
-  ].join("\n");
-}
-
-/**
- * Avisos de layout del intento anterior, SOLO de los archivos que esta llamada
- * va a reescribir. El resto del proyecto no tiene por que enterarse.
- */
-function layoutNotesBlock(only, layoutNotes = {}, layoutNote) {
-  const scenes = Array.isArray(only) ? only : only ? [only] : [];
-  const entries = [];
-  if (layoutNote) entries.push([scenes[0]?.file ?? "?", String(layoutNote)]);
-  for (const s of scenes) {
-    const note = layoutNotes[s.file];
-    if (note) entries.push([s.file, String(note)]);
-  }
-  if (!entries.length) return [];
-  return [
-    "# Fix this first",
-    ...entries.map(([file, note]) => `This exact file was rejected: ${file}\n${note}`),
+    "# The other scenes of the piece (already staged — do not restage them, do not repeat their layout right next to yours)",
+    ...otras.map((s) => {
+      const src = plan.kind === "slides" ? asArray(brief.slides)[s.index] ?? {} : plan.kind === "motion" ? asArray(brief.scenes)[s.index] ?? {} : brief;
+      const usado = layoutPlan[s.file]?.layout;
+      return `- scene ${s.index + 1}: ${str(src.title || src.display_line || src.role || "")}${usado ? `  (layout: ${usado})` : ""}`;
+    }),
     "",
   ];
 }
 
-/** Prompt de composicion: el modelo escribe SOLO los HTML de escena. */
-export function buildCompositionPrompt({ cfg, brand, item, formatCfg, brief, plan, referenceProject, only, layoutNote, layoutNotes } = {}) {
-  const lang = LANGUAGE_NAMES[item.language] ?? item.language ?? "English";
-  // Copia sin base64: ver writeCleanReference. Leer el original costaba ~35k tokens.
-  const refFrame = `./${META_DIR}/reference.html`;
+/**
+ * Avisos de escenas rechazadas (layout flojo, check estancado), SOLO de las
+ * que esta llamada va a componer. El resto no tiene por que enterarse.
+ */
+function layoutNotesBlock(scenes, layoutNotes = {}) {
+  const entries = scenes.filter((s) => layoutNotes[s.file]).map((s) => [s.file, String(layoutNotes[s.file])]);
+  if (!entries.length) return [];
   return [
-    `You are writing HyperFrames compositions for a ${item.format} piece, ${plan.width}x${plan.height}.`,
+    "# Fix this first",
+    ...entries.map(([file, note]) => `The previous staging of ${file} was rejected:\n${note}\nChoose a DIFFERENT layout for it this time.`),
     "",
-    ...layoutNotesBlock(only, layoutNotes, layoutNote),
-    "# What you own",
-    ownershipBlock(only, plan),
-    "DO NOT create or modify index.html — the pipeline owns it and will overwrite anything you put there.",
-    "DO NOT modify frame.md, hyperframes.json or anything under assets/.",
+  ];
+}
+
+/**
+ * El playbook: en positivo, que hace que una pieza se lea bien. Antes el prompt
+ * de compose tenia doce prohibiciones y ningun patron; el modelo sabia que no
+ * hacer y no que era bueno.
+ */
+const PLAYBOOK = [
+  "# How to stage (the playbook)",
+  "- ONE display moment per scene. `display` is the line that carries it — short (aim <= 45 chars, hard",
+  "  limit 70), in the copy's own words, lowercase unless it is a proper noun. Everything else supports it.",
+  "- The arc: scene 1 is the hook (hero or statement); the last scene is the close (cta); the FOCAL scene",
+  "  is statement or stat. In between, vary: never the same layout twice in a row, and a piece of 5+ scenes",
+  "  uses at least 3 different layouts.",
+  "- stat ONLY when the copy has a real figure (a price, a count, a time). Put the figure alone in stat.value",
+  "  (<= 8 chars: '5 min', '$29', '3x', '0') and what it measures in stat.label. Never invent a number.",
+  "- cues when the scene is narrated in beats — the on-screen cues of a video scene: 2-4 short cues, in the",
+  "  given order, one idea each. `display` is the headline of the beat: the scene title, or the first cue if",
+  "  that IS the headline (then do not repeat it as a cue).",
+  "- split for 2-4 label/value facts (what you get, the terms). steps for a process (how it works).",
+  "- accent_word: exactly one word — or a two-word phrase — that appears VERBATIM in display and carries the",
+  "  meaning ('backend', '5 minutos', 'sin tarjeta'). Never a filler word. Empty is fine.",
+  "- kicker: optional mono eyebrow, UPPERCASE, <= 28 chars, naming the section (WHAT YOU GET, THE PRICE,",
+  "  HOW IT WORKS). Same language as the copy. Use it consistently across the piece or not at all.",
+  "- register: 'dark' or 'light' per scene. Keep the brief's suggestion unless a light scene between dark",
+  "  ones gives the piece a breath at the right moment (the focal scene, the close). Never at random.",
+  "- Do not invent copy. Every string comes from the brief's copy for that scene: you may shorten a line to",
+  "  fit a slot, split a sentence into cues, or pull a figure out of a sentence; you may NOT add a claim,",
+  "  a number or a name that is not there. Keep the copy's language.",
+];
+
+/**
+ * Prompt del planificador de layouts: catalogo, playbook, el copy de las
+ * escenas a componer, y el JSON que se espera. Una llamada por lote de escenas
+ * pendientes (normalmente, todas).
+ */
+export function buildLayoutPlanPrompt({ brand, item, formatCfg, brief, plan, only, layoutNotes = {}, layoutPlan = {}, complaint = "" } = {}) {
+  const scenes = Array.isArray(only) && only.length ? only : plan.scenes;
+  const lang = LANGUAGE_NAMES[item?.language] ?? item?.language ?? "English";
+  return [
+    `You are staging a ${item?.format ?? plan.kind} piece for ${brand?.name ?? "the brand"}: ${plan.width}x${plan.height}, ${plan.scenes.length} scene(s).`,
+    "The copy is fixed by the brief. Your job: choose ONE layout per scene from the catalog and fill its slots.",
+    "You are not writing HTML — the layouts are prefabricated and already solve typography, spacing, safe",
+    "areas and motion for this brand. Answer with JSON only.",
     "",
-    "# How to deliver the HTML",
-    "The model is called over HTTP: there are no Write or Edit tools here. To produce each",
-    "composition file, print its full contents in your answer using this exact fence shape:",
+    ...(complaint
+      ? ["# Your previous answer was rejected", complaint, "Fix exactly that and answer again.", ""]
+      : []),
+    ...layoutNotesBlock(scenes, layoutNotes),
+    "# Layout catalog",
+    layoutCatalog(),
     "",
-    "```html",
-    "compositions/frames/01-name.html",
-    "<!doctype html> ... the full file, exactly as it would be on disk ...",
-    "```",
+    ...PLAYBOOK,
     "",
-    "One block per file, in the same order as the list above. The first line inside the fence is",
-    "the relative path and NOTHING else: no angle brackets, no quotes, no backticks, no prose.",
-    "Copy it verbatim from the list above. Everything after that line, up to the closing fence,",
-    "is the file body. Do not write anything outside these fences.",
+    `Language of every string: ${lang}. Concept of the piece: ${str(brief?.concept) || str(brief?.display_line) || "-"}`,
     "",
-    "# Read these first",
-    "The files below are inlined in this prompt under headers like `<<<BCA_FILE path=\"frame.md\">>>`.",
-    "Treat them as if they were on disk and read them directly — there are no file tools here.",
-    `1. frame.md — the brand design system. Its YAML frontmatter (colors, typography, components) is`,
-    "   normative: use those hex values and type roles verbatim. Do not invent a palette.",
-    `2. ${META_DIR}/reference.html — a composition that rendered correctly, with the font base64 stripped out.`,
-    "   Copy its shape: the <template> wrapper, the #root block, the clip layers, the timeline",
-    "   registration at the end. Do not go looking for other compositions.",
-    `3. Fonts: put the single line ${FONT_MARKER} as the FIRST line inside <style>. Do NOT open`,
-    "   the font CSS and do NOT transcribe any base64 — the build swaps that marker for the real",
-    `   @font-face blocks. Use the families by name: "${displayFamily(brand)}" for display and`,
-    `   "${monoFamily(brand)}" for mono. Those two, nothing else.`,
-    "",
-    HARD_RULES,
-    "",
-    "# Skeleton",
-    skeleton(plan.width, plan.height, brand),
-    "",
-    "# The brief — the copy is fixed, the staging is yours",
-    `Language of every word on screen: ${lang}. Copy the strings exactly as written; do not rewrite,`,
-    "do not translate, do not add a fact that is not here.",
-    "",
-    `Concept: ${str(brief.concept) || str(brief.display_line)}`,
-    "",
-    sceneCopyBlock(item.format, brief, plan),
-    verticalBlock(formatCfg),
-    plan.kind === "motion"
-      ? [
-          "# Video specifics",
-          "- There is no voiceover: the cue list IS the clock. One cue in, beat, next cue.",
-          "- No exits inside a scene — the pipeline injects a cross-dissolve at each boundary,",
-          `  which is why each scene's data-duration is ${SCENE_OVERLAP}s longer than its content.`,
-          "- One display moment per scene, 3-6x everything else. Long-tail settles, power3 by default.",
-        ].join("\n")
-      : [
-          "# Still specifics",
-          "- This frame gets photographed at a single instant, near the end of its window, so everything",
-          "  must be fully settled and readable by then — but the reveal must still span most of the window.",
-          "- Composition matters more than motion here: it has to hold as a poster.",
-        ].join("\n"),
-    "",
-    "After printing all the fences, stop. Do not add a summary or a recap.",
+    "# The scenes to stage and their copy",
+    sceneCopyBlock(item?.format, brief, plan, scenes),
+    ...otrasEscenasBlock(brief, plan, scenes, layoutPlan),
+    "# Answer — JSON only, this exact shape",
+    "{",
+    '  "scenes": [',
+    "    {",
+    `      "file": "<exactly as listed above>",`,
+    `      "layout": "<${LAYOUT_IDS.join("|")}>",`,
+    '      "register": "dark|light",',
+    '      "kicker": "<optional>", "display": "<required>", "accent_word": "<optional>", "support": "<optional>",',
+    '      "cues": ["..."],                       // cues layout only, 2-4',
+    '      "rows": [{"label": "", "value": ""}],  // split layout only, 2-4',
+    '      "steps": [{"title": "", "text": ""}],  // steps layout only, 2-4',
+    '      "stat": {"value": "", "label": ""},    // stat layout only',
+    '      "cta": {"line": "", "url": ""}         // cta layout only; url = the brand site or empty',
+    "    }",
+    "  ]",
+    "}",
+    `One entry per file listed above (${scenes.length}), same order. Include only the slots the chosen layout uses.`,
   ]
-    .filter(Boolean)
+    .filter((l) => l !== null && l !== undefined)
     .join("\n");
+}
+
+/**
+ * Valida lo que devolvio el planificador contra el plan y los layouts. Lanza
+ * con el detalle exacto (que archivo, que hueco) para poder reclamarselo.
+ * Devuelve Map<file, { layout, slots }>.
+ */
+export function parseLayoutPlan(data, { plan, only } = {}) {
+  const scenes = Array.isArray(only) && only.length ? only : plan.scenes;
+  if (!data || typeof data !== "object" || !Array.isArray(data.scenes)) {
+    throw new Error('la respuesta debe ser un objeto con "scenes": [...]');
+  }
+  const porArchivo = new Map();
+  for (const entry of data.scenes) {
+    const f = normalizePath(entry?.file);
+    const scene = scenes.find((s) => normalizePath(s.file) === f) ?? scenes.find((s) => f && normalizePath(s.file).endsWith(`/${f.split("/").pop()}`));
+    if (scene) porArchivo.set(scene.file, entry);
+  }
+  const errs = [];
+  const out = new Map();
+  let anterior = null;
+  for (const s of scenes) {
+    const e = porArchivo.get(s.file);
+    if (!e) {
+      errs.push(`falta la escena ${s.file}`);
+      continue;
+    }
+    const layout = str(e.layout);
+    const problemas = validateSlots(layout, e);
+    if (problemas.length) errs.push(`${s.file}: ${problemas.join("; ")}`);
+    if (anterior && anterior === layout && scenes.length > 2) errs.push(`${s.file}: repite el layout ${layout} de la escena anterior; variar`);
+    anterior = layout;
+    const { file: _f, layout: _l, ...slots } = e;
+    out.set(s.file, { layout, slots });
+  }
+  if (errs.length) throw new Error(errs.join(" | "));
+  return out;
+}
+
+/** El plan de layouts guardado en el proyecto, para saber que layout tiene cada escena. */
+export function readLayoutPlan(projectDir) {
+  const f = rutaMeta(projectDir, "layout-plan.json");
+  if (!existsSync(f)) return {};
+  try {
+    return JSON.parse(readFileSync(f, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeLayoutPlan(projectDir, planDeLayouts) {
+  const out = rutaMeta(projectDir, "layout-plan.json");
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, JSON.stringify(planDeLayouts, null, 2));
 }
 
 /**
@@ -2050,155 +2007,84 @@ async function makeBrief(cfg, store, item, formatCfg, { log, deps, brand }) {
 }
 
 async function writeCompositions(cfg, store, item, formatCfg, brief, plan, projectDir, { log, deps, brand }) {
-  // Una llamada por lote de escenas, Y EN PARALELO.
-  //
-  // Cada llamada HTTP al backend tarda unos minutos (el grueso es esperar al
-  // modelo, no CPU). En serie, un carrusel de 6 son ~30 min de reloj con el
-  // proceso casi todo el tiempo ocioso esperando I/O. Las escenas son
-  // independientes — cada una escribe su propio archivo — asi que van
-  // concurrentes y el reloj pasa a ser el del lote mas lento, no la suma.
-  //
-  // Ademas cada llamada recarga el system prompt y los archivos inlined (frame.md
-  // + reference.html) aunque escriba una sola escena: por eso los lotes agrupan
-  // varias escenas por llamada (limits.scenesPerCall). Ese costo fijo se amortiza
-  // y, de paso, bajan las sesiones concurrentes que saturan la maquina y la API.
-  //
-  // La concurrencia se limita por RAM y CPU: las llamadas en paralelo
-  // comparten ancho de banda y conexiones TCP, y seis a la vez castigan los
-  // limites de la API.
   const layoutNotes = readLayoutNotes(projectDir);
+  const layoutPlan = readLayoutPlan(projectDir);
   const pending = plan.scenes.filter((sc) => !existsSync(join(projectDir, sc.file)));
   const reused = plan.scenes.length - pending.length;
 
-  const batchSize = Math.max(1, Math.floor(Number(cfg.limits?.scenesPerCall) || 2));
-  const batches = [];
-  for (let i = 0; i < pending.length; i += batchSize) batches.push(pending.slice(i, i + batchSize));
-
-  const limit = sceneConcurrency({
-    scenes: batches.length,
-    configured: cfg.limits?.maxConcurrentScenes,
-  });
-  let cost = 0;
-  let done = 0;
-
-  if (pending.length) {
-    const cuales = pending.map((s) => s.file.split("/").pop()).join(", ");
-    log?.(
-      `compose: ${pending.length} escena(s) por escribir (${cuales}) en ${batches.length} lote(s) de a ${batchSize}, ${limit} en paralelo` +
-        (reused ? `; las otras ${reused} ya estaban escritas del intento anterior y se reusan` : "") +
-        " — cada lote es una llamada al modelo de varios minutos; se avisa al terminar cada uno",
-    );
-  }
-
-  const results = await mapLimit(batches, limit, async (batch) => {
-    const prompt = buildCompositionPrompt({
-      cfg,
-      brand,
-      item,
-      formatCfg,
-      brief,
-      plan,
-      referenceProject: brand?.projectDir ?? cfg.hyperframes.referenceProject,
-      only: batch,
-      layoutNotes,
-    });
-    const files = gatherContextFiles(projectDir, plan, { includeExisting: false });
-    try {
-      const res = await deps.runModelo(prompt, {
-        model: cfg.models?.compose,
-        timeoutMs: cfg.limits?.modelTimeoutMs,
-        files,
-      });
-      const { files: answered, missing, skipped } = extractCompositions(res.text, {
-        scenes: batch,
-      });
-      const truncated = res.stopReason === "max_tokens";
-      if (truncated) {
-        log?.(`  aviso: la respuesta se corto en max_tokens (${batch.map((s) => s.file).join(", ")})`);
-      }
-      if (skipped.length) {
-        log?.(`  aviso: el modelo devolvio bloques que no son del lote (${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "..." : ""})`);
-      }
-      let written = [];
-      try {
-        written = writeCompositionsFromAnswer(answered, { scenes: batch }, projectDir);
-      } catch (writeErr) {
-        for (const scene of batch) {
-          store.logRun({
-            kind: "compose",
-            itemId: item.id,
-            ok: false,
-            detail: `${scene.file}: ${String(writeErr?.message ?? writeErr).slice(0, 200)}`,
-          });
-        }
-        return { perFile: batch.map((scene) => ({ scene, ok: false, err: writeErr })), cost: 0 };
-      }
-      // El costo de la llamada se anota UNA vez, contra la primera escena del
-      // lote: anotarlo en cada una inflaria el total de `npm run costs`.
-      const perFile = batch.map((scene, i) => {
-        const ok = written.includes(scene.file);
-        store.logRun({
-          kind: "compose",
-          itemId: item.id,
-          model: res.model,
-          costUsd: i === 0 ? res.costUsd ?? 0 : null,
-          ms: res.ms,
-          ok,
-          detail: `${scene.file}${i === 0 && batch.length > 1 ? ` (lote de ${batch.length})` : ""}`,
-        });
-        // Un bloque ```html sin cerrar no lo ve el parser: si la respuesta se
-        // corto por max_tokens, "faltante en respuesta" manda a buscar el
-        // problema donde no esta. Se nombra la causa real.
-        const why = truncated
-          ? "la respuesta se corto en max_tokens (subi minimax.maxTokens o baja limits.scenesPerCall)"
-          : missing.includes(scene.file)
-            ? "faltante en respuesta"
-            : undefined;
-        return { scene, ok, missing: ok ? undefined : why };
-      });
-      const okCount = perFile.filter((r) => r.ok).length;
-      done += okCount;
-      // El contador va sobre el total, no sobre lo hecho en esta corrida: si no,
-      // al reusar escenas el numero baja de golpe y parece que retrocedio.
-      store.beat(item.id, `compose ${reused + done}/${plan.scenes.length}`);
-      log?.(`  ${batch.map((s) => s.file).join(", ")} (${reused + done}/${plan.scenes.length})`);
-      return { perFile, cost: res.costUsd ?? 0 };
-    } catch (err) {
-      for (const scene of batch) {
-        store.logRun({
-          kind: "compose",
-          itemId: item.id,
-          ok: false,
-          detail: `${scene.file}: ${String(err?.message ?? err).slice(0, 200)}`,
-        });
-      }
-      return { perFile: batch.map((scene) => ({ scene, ok: false, err })), cost: 0 };
-    }
-  });
-
-  for (const r of results) cost += r?.cost ?? 0;
-
-  const all = results.flatMap((r) => r?.perFile ?? []);
-  const missing = all.filter((r) => !r?.ok);
-  if (missing.length) {
-    const detalle = missing
-      .map((r) => {
-        const why = r.err ? String(r.err.message ?? r.err) : (r.missing ?? "");
-        return `${r.scene.file}${why ? `: ${why.slice(0, 160)}` : ""}`;
-      })
-      .join("; ");
-    throw new GenerateError(`no se pudo escribir: ${detalle}`, { phase: "compose", itemId: item.id });
-  }
-
   if (!pending.length) {
     log?.(`composiciones: las ${reused} ya estaban escritas del intento anterior (mismo brief); no hay nada que componer, se pasa al check`);
-  } else {
-    log?.(
-      `composiciones: ${pending.length} escrita(s) en ${batches.length} lote(s)` +
-        (reused ? ` + ${reused} reusada(s) del intento anterior` : "") +
-        ` = ${plan.scenes.length} listas`,
-    );
+    return 0;
   }
+  const cuales = pending.map((s) => s.file.split("/").pop()).join(", ");
+  log?.(
+    `compose: ${pending.length} escena(s) por componer (${cuales}) — el modelo elige un layout por escena y rellena sus huecos con el copy del brief, en una llamada; el codigo renderiza el HTML` +
+      (reused ? `. Las otras ${reused} ya estaban escritas y se conservan` : "") +
+      " — suele tardar menos de un minuto",
+  );
+
+  // Una llamada JSON, corta. Si el plan no valida se le reclama con el detalle
+  // exacto, una vez; despues se falla en fase compose (reintentable).
+  let staged = null;
+  let complaint = "";
+  let cost = 0;
+  let lastErr;
+  for (let attempt = 0; attempt < 2 && !staged; attempt++) {
+    const prompt = buildLayoutPlanPrompt({ brand, item, formatCfg, brief, plan, only: pending, layoutNotes, layoutPlan, complaint });
+    const res = await deps.runModeloJSON(prompt, {
+      model: cfg.models?.compose,
+      timeoutMs: cfg.limits?.modelTimeoutMs,
+    });
+    cost += res.costUsd ?? 0;
+    store.logRun({
+      kind: "compose",
+      itemId: item.id,
+      model: res.model,
+      costUsd: res.costUsd,
+      ms: res.ms,
+      ok: true,
+      detail: `plan de layouts (intento ${attempt + 1}, ${pending.length} escena(s))`,
+    });
+    try {
+      staged = parseLayoutPlan(res.data, { plan, only: pending });
+    } catch (err) {
+      lastErr = err;
+      complaint = err.message;
+      log?.(`  el plan de layouts no valida (intento ${attempt + 1}): ${err.message.slice(0, 300)}`, "aviso");
+    }
+  }
+  if (!staged) {
+    throw new GenerateError(`el plan de layouts no paso validacion tras 2 intentos: ${lastErr?.message}`, {
+      phase: "compose",
+      itemId: item.id,
+    });
+  }
+
+  const vertical = pantallaCompleta(plan.width, plan.height);
+  for (const scene of pending) {
+    const { layout, slots } = staged.get(scene.file);
+    let html;
+    try {
+      html = renderLayout(layout, { brand, width: plan.width, height: plan.height, scene, total: plan.scenes.length, slots, vertical });
+    } catch (err) {
+      throw new GenerateError(`no se pudo renderizar ${scene.file} con el layout ${layout}: ${String(err?.message ?? err).slice(0, 200)}`, {
+        phase: "compose",
+        itemId: item.id,
+      });
+    }
+    const dest = join(projectDir, scene.file);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, html);
+    layoutPlan[scene.file] = { layout, register: slots.register ?? "dark", display: str(slots.display) };
+    log?.(`  ${scene.file.split("/").pop()}: layout ${layout}${slots.register === "light" ? ", registro claro" : ""} — "${str(slots.display).slice(0, 60)}"`);
+  }
+  writeLayoutPlan(projectDir, layoutPlan);
+  store.beat(item.id, `compose ${plan.scenes.length}/${plan.scenes.length}`);
+  log?.(
+    `composiciones: ${pending.length} compuesta(s)` +
+      (reused ? ` + ${reused} reusada(s) del intento anterior` : "") +
+      ` = ${plan.scenes.length} listas`,
+  );
   return cost;
 }
 
@@ -2491,6 +2377,271 @@ async function checkAndRepair(cfg, store, item, formatCfg, brief, plan, projectD
   }
 }
 
+// ---------------------------------------------------------------------------
+// Revision visual: fotografiar cada escena y que un modelo con vision la mire
+// ---------------------------------------------------------------------------
+//
+// El linter mide cajas: contraste, solapes, desbordes. No ve una palabra
+// partida a mitad de linea, una mitad del lienzo muerta, un numero que no
+// aparecio ni un texto tapado por un grafico — que es exactamente lo que se
+// veia en las piezas. Aca se fotografia cada escena en su instante
+// representativo (el mismo del snapshot de un still) y el modelo de vision
+// responde contra una lista corta. Lo que encuentra vuelve a la conversacion
+// de reparacion CON la imagen adjunta, para que quien arregla vea lo mismo.
+//
+// Las imagenes viajan solo en el mensaje de esa vuelta: el historial que se
+// reenvia guarda un marcador de texto en su lugar (sinImagenes), nada de
+// base64 en el prompt siguiente, en los logs ni en la base.
+
+export function reviewTurnsDe(cfg) {
+  const n = Number(cfg?.limits?.reviewTurns);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_REVIEW_TURNS;
+}
+
+/** Fotografia todas las escenas en su instante representativo. PNGs en orden. */
+async function snapshotScenes(cfg, item, plan, projectDir, tag, { log, deps }) {
+  const rel = `snapshots/${tag}`;
+  const outDir = join(projectDir, rel);
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+  const at = plan.scenes.map((s) => s.snapshotAt).join(",");
+  const res = await deps.hyperframes(cfg, projectDir, ["snapshot", "--at", at, "--no-end", "-o", rel], {
+    timeoutMs: SNAPSHOT_TIMEOUT_MS,
+    log,
+  });
+  const pngs = snapshotOutputs(outDir);
+  if (res.code !== 0 && pngs.length === 0) {
+    throw new GenerateError(`hyperframes snapshot fallo: ${summarizeCheck(res).texto.slice(0, 800)}`, {
+      phase: "snapshot",
+      itemId: item.id,
+    });
+  }
+  if (pngs.length < plan.scenes.length) {
+    throw new GenerateError(`snapshot devolvio ${pngs.length} PNG y se esperaban ${plan.scenes.length}`, {
+      phase: "snapshot",
+      itemId: item.id,
+    });
+  }
+  return pngs;
+}
+
+const REVIEW_CODES = ["word_broken", "text_clipped", "overlap", "empty_area", "missing_copy", "illegible", "too_small", "misplaced"];
+
+/** El copy que deberia verse en una escena, para que el revisor sepa que buscar. */
+function copyEsperado(brief, plan, scene) {
+  const src = plan.kind === "slides" ? asArray(brief.slides)[scene.index] ?? {} : plan.kind === "motion" ? asArray(brief.scenes)[scene.index] ?? {} : brief;
+  const partes = [];
+  if (src.kicker) partes.push(`kicker: ${str(src.kicker)}`);
+  if (src.display_line) partes.push(`display: ${str(src.display_line)}`);
+  if (src.support_line) partes.push(`support: ${str(src.support_line)}`);
+  const cues = asArray(src.on_screen).map(str).filter(Boolean);
+  if (cues.length) partes.push(`cues: ${cues.join(" | ")}`);
+  if (src.title) partes.push(`scene: ${str(src.title)}`);
+  return partes.join("; ") || "-";
+}
+
+/**
+ * El mensaje del revisor: instrucciones, y por escena el copy esperado y la
+ * foto. Devuelve los bloques de contenido (texto + imagenes).
+ */
+export function buildReviewMessage({ plan, brief, pngs, layoutPlan = {} }) {
+  const bloques = [
+    {
+      type: "text",
+      text: [
+        `Visual review of ${plan.scenes.length} rendered scene(s) of a ${plan.width}x${plan.height} ${plan.kind === "motion" ? "video" : "still"} piece.`,
+        "Each image below is one scene photographed at its representative instant, after all its reveals. Look at each",
+        "one as a viewer would and report ONLY problems a viewer would notice. Codes:",
+        "- word_broken: a word split across two lines mid-word (e.g. 'otr / a')",
+        "- text_clipped: text cut by the canvas edge or by a container",
+        "- overlap: text over text, or a graphic covering text",
+        "- empty_area: a whole half or a big region with nothing, while the rest is crammed",
+        "- missing_copy: a listed line/cue/number that does not appear (a dash or blank where a figure should be counts)",
+        "- illegible: text unreadable (contrast, size against the canvas)",
+        "- too_small: the main line is not readable at arm's length on a phone",
+        "- misplaced: an element sits outside the safe area or breaks the grid visibly",
+        "Do NOT report taste, style or things you would merely do differently. Balanced, readable, complete = ok.",
+        "At most 3 problems per scene, the most visible first. Answer JSON only:",
+        '{ "scenes": [ { "file": "<as listed>", "ok": true|false, "problems": [ { "code": "<one of the codes>", "detail": "<what and where, one sentence>", "fix": "<the concrete change>" } ] } ] }',
+        "",
+      ].join("\n"),
+    },
+  ];
+  plan.scenes.forEach((s, i) => {
+    bloques.push({
+      type: "text",
+      text: `Scene ${i + 1} — file: ${s.file}${layoutPlan[s.file]?.layout ? ` (layout: ${layoutPlan[s.file].layout})` : ""}. Expected copy: ${copyEsperado(brief, plan, s)}`,
+    });
+    if (pngs[i]) bloques.push(imagenPng(readFileSync(pngs[i])));
+  });
+  return bloques;
+}
+
+/** Normaliza el veredicto del revisor contra el plan. [{ scene, ok, problems }] */
+export function parseReview(data, plan) {
+  const entries = Array.isArray(data?.scenes) ? data.scenes : [];
+  return plan.scenes.map((s) => {
+    const f = normalizePath(s.file);
+    const e = entries.find((x) => normalizePath(x?.file) === f) ?? entries.find((x) => normalizePath(x?.file).split("/").pop() === f.split("/").pop());
+    const problems = (Array.isArray(e?.problems) ? e.problems : [])
+      .map((p) => ({ code: str(p?.code).toLowerCase(), detail: str(p?.detail), fix: str(p?.fix) }))
+      .filter((p) => REVIEW_CODES.includes(p.code) && p.detail)
+      .slice(0, 3);
+    return { scene: s, ok: !e || (e.ok !== false && problems.length === 0), problems };
+  });
+}
+
+/**
+ * Prompt de reparacion visual: por escena, lo que ve mal el revisor; la foto
+ * va adjunta como bloque de imagen despues del texto. Misma entrega (fences)
+ * y mismas reglas duras que la reparacion del linter.
+ */
+export function buildVisualRepairPrompt({ plan, malas, turn, maxTurns, layoutPlan = {} } = {}) {
+  return [
+    turn === 1
+      ? "A visual review of the rendered scenes found problems that the linter cannot see. Below, per scene: what a viewer"
+      : "The scenes were photographed again after your rewrite. A visual review still finds problems. Below, per scene: what a viewer",
+    "sees wrong and the snapshot itself. Fix the HTML in place — keep the scene's layout and copy, change what is needed:",
+    "type size or line breaks (one word per line-span, never let the browser split a word), positions, spacing, stacking order.",
+    `Visual repair turn ${turn} of ${maxTurns}. After your answer the files are written, the linter runs, the scenes are photographed`,
+    "again and you see the result.",
+    "",
+    "# What is wrong",
+    ...malas.flatMap(({ scene, problems }, i) => [
+      `${i + 1}. ${scene.file}${layoutPlan[scene.file]?.layout ? ` (layout: ${layoutPlan[scene.file].layout})` : ""}`,
+      ...problems.map((p) => `   - ${p.code}: ${p.detail}${p.fix ? ` → ${p.fix}` : ""}`),
+    ]),
+    "",
+    "# Files you may edit",
+    ...malas.map(({ scene }) => `- ${scene.file}  (composition id: ${scene.compId}, data-duration ${scene.duration})`),
+    "",
+    "index.html is owned by the pipeline: do not touch it, and do not change any data-start,",
+    "data-duration, data-width, data-height or data-composition-id value listed above.",
+    "",
+    ...ENTREGA,
+    "",
+    HARD_RULES,
+  ].join("\n");
+}
+
+/**
+ * Fotografiar, revisar, y si hace falta reparar con la foto a la vista — hasta
+ * `limits.reviewTurns` vueltas. Devuelve los PNG de la ultima foto (los stills
+ * los usan como entregable) y el costo.
+ *
+ * Quedarse sin vueltas NO falla la pieza: una observacion visual es calidad,
+ * no un bloqueo. Se renderiza igual y queda dicho en la bitacora.
+ */
+async function reviewAndRepair(cfg, store, item, formatCfg, brief, plan, projectDir, indexHtml, { log, deps, brand }) {
+  const maxTurns = reviewTurnsDe(cfg);
+  const necesitaFotos = plan.kind !== "motion" || maxTurns > 0;
+  if (!necesitaFotos) return { cost: 0, pngs: null };
+  const layoutPlan = readLayoutPlan(projectDir);
+  let cost = 0;
+  let turnos = 0;
+  let mensajes = null;
+  let pngs = null;
+
+  for (;;) {
+    store.beat(item.id, `review ${turnos + 1}`);
+    log?.(
+      turnos === 0
+        ? `snapshot: hyperframes fotografia las ${plan.scenes.length} escena(s) en su instante representativo — suele tardar menos de un minuto`
+        : "snapshot: se vuelven a fotografiar las escenas con lo que se acaba de escribir",
+    );
+    pngs = await snapshotScenes(cfg, item, plan, projectDir, `review-${turnos}`, { log, deps });
+    if (maxTurns === 0) return { cost, pngs };
+
+    log?.(`revision visual ${turnos + 1}/${maxTurns}: el modelo mira cada foto y busca palabras partidas, texto cortado, solapes, mitades vacias, copy faltante`);
+    const veredicto = await revisarFotos(cfg, store, item, plan, brief, pngs, layoutPlan, { log, deps });
+    cost += veredicto.cost;
+    if (!veredicto.review) return { cost, pngs };
+    const malas = veredicto.review.filter((r) => !r.ok && r.problems.length);
+    if (!malas.length) {
+      log?.("revision visual: sin observaciones, las escenas se ven bien");
+      return { cost, pngs };
+    }
+    log?.(`revision visual: ${malas.length} escena(s) con observaciones`, "aviso");
+    for (const m of malas) log?.(`    ${m.scene.file.split("/").pop()}: ${m.problems.map((p) => `${p.code} — ${p.detail}`).join("; ")}`, "aviso");
+    if (turnos >= maxTurns) {
+      log?.(`se agotaron las ${maxTurns} vuelta(s) de revision visual: se renderiza igual, con esas observaciones a la vista`, "aviso");
+      return { cost, pngs };
+    }
+
+    // Reparar con la foto adjunta. Solo los archivos con observaciones viajan
+    // inline; la imagen va en este mensaje y nada mas que en este.
+    const turno = turnos + 1;
+    const prompt = buildVisualRepairPrompt({ plan, malas, turn: turno, maxTurns, layoutPlan });
+    const files = gatherContextFiles(projectDir, { scenes: malas.map((m) => m.scene) }, { includeExisting: true });
+    const texto = conArchivos(prompt, files, { cache: mensajes === null });
+    const bloques = Array.isArray(texto) ? [...texto] : [{ type: "text", text: texto }];
+    for (const m of malas) {
+      const png = pngs[m.scene.index];
+      if (!png) continue;
+      bloques.push({ type: "text", text: `Snapshot of ${m.scene.file} at ${m.scene.snapshotAt}s:` }, imagenPng(readFileSync(png)));
+    }
+    mensajes = mensajes ? [...mensajes, { role: "user", content: bloques }] : [{ role: "user", content: bloques }];
+    log?.(`reparacion visual, vuelta ${turno}/${maxTurns}: el modelo ve la foto de ${malas.map((m) => m.scene.file.split("/").pop()).join(", ")} y reescribe`);
+    store.beat(item.id, `repair visual ${turno}/${maxTurns}`);
+    const fix = await deps.runModeloChat(mensajes, {
+      model: cfg.models?.repair ?? cfg.models?.compose,
+      timeoutMs: cfg.limits?.modelTimeoutMs,
+    });
+    // El historial sigue sin base64: la imagen ya cumplio.
+    mensajes = sinImagenes(fix.mensajes ?? [...mensajes, { role: "assistant", content: fix.text }]);
+    cost += fix.costUsd ?? 0;
+    turnos++;
+    store.logRun({
+      kind: "compose",
+      itemId: item.id,
+      model: fix.model,
+      costUsd: fix.costUsd,
+      ms: fix.ms,
+      ok: true,
+      detail: `reparacion visual, vuelta ${turno}${fix.cacheReadTokens ? ` (${fix.cacheReadTokens} tokens desde cache)` : ""}`,
+    });
+    const { files: answered } = extractCompositions(fix.text, { scenes: malas.map((m) => m.scene) });
+    const escritos = Object.keys(answered);
+    if (!escritos.length) {
+      log?.("  la reparacion visual no trajo ningun archivo: se deja como esta", "aviso");
+      return { cost, pngs };
+    }
+    writeCompositionsFromAnswer(answered, plan, projectDir);
+    applyFonts(projectDir, plan, { log });
+    log?.(`  reescritas ${escritos.length} composicion(es): ${escritos.map((f) => f.split("/").pop()).join(", ")}`);
+    // Lo reescrito tiene que volver a pasar el linter antes de fotografiarse.
+    cost += await checkAndRepair(cfg, store, item, formatCfg, brief, plan, projectDir, indexHtml, { log, deps, brand });
+  }
+}
+
+/** Una llamada al modelo de vision; reintenta una vez si no vuelve JSON. */
+async function revisarFotos(cfg, store, item, plan, brief, pngs, layoutPlan, { log, deps }) {
+  const contenido = buildReviewMessage({ plan, brief, pngs, layoutPlan });
+  let cost = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await deps.runModeloChat([{ role: "user", content: contenido }], {
+      model: cfg.models?.review ?? cfg.models?.compose,
+      timeoutMs: cfg.limits?.modelTimeoutMs,
+      maxTokens: 4000,
+    });
+    cost += res.costUsd ?? 0;
+    store.logRun({
+      kind: "review",
+      itemId: item.id,
+      model: res.model,
+      costUsd: res.costUsd,
+      ms: res.ms,
+      ok: true,
+      detail: `revision visual de ${plan.scenes.length} escena(s) (intento ${attempt + 1})`,
+    });
+    const data = extractJSON(res.text);
+    if (data && Array.isArray(data.scenes)) return { review: parseReview(data, plan), cost };
+    log?.(`  la revision visual no devolvio un veredicto legible (intento ${attempt + 1})`, "aviso");
+  }
+  log?.("  sin veredicto visual: se sigue sin revisar", "aviso");
+  return { review: null, cost };
+}
+
 function snapshotOutputs(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -2627,31 +2778,8 @@ export function findThinLayouts(pngs, plan, ffmpegPath) {
   return bad;
 }
 
-async function buildStills(cfg, item, plan, projectDir, contentDir, { log, deps }) {
-  const outDir = join(projectDir, "snapshots", `run-${item.revision ?? 0}`);
-  rmSync(outDir, { recursive: true, force: true });
-  mkdirSync(outDir, { recursive: true });
-
-  const at = plan.scenes.map((s) => s.snapshotAt).join(",");
-  log?.(`snapshot: hyperframes fotografia ${plan.scenes.length} escena(s) y despues se mide que el contenido llene el lienzo — suele tardar 1 a 2 minutos`);
-  const res = await deps.hyperframes(cfg, projectDir, ["snapshot", "--at", at, "--no-end", "-o", `snapshots/run-${item.revision ?? 0}`], {
-    timeoutMs: SNAPSHOT_TIMEOUT_MS,
-    log,
-  });
-  const pngs = snapshotOutputs(outDir);
-  if (res.code !== 0 && pngs.length === 0) {
-    throw new GenerateError(`hyperframes snapshot fallo: ${summarizeCheck(res).texto.slice(0, 800)}`, {
-      phase: "snapshot",
-      itemId: item.id,
-    });
-  }
-  if (pngs.length < plan.scenes.length) {
-    throw new GenerateError(
-      `snapshot devolvio ${pngs.length} PNG y se esperaban ${plan.scenes.length}`,
-      { phase: "snapshot", itemId: item.id },
-    );
-  }
-
+async function buildStills(cfg, item, plan, projectDir, contentDir, pngs, { log, deps }) {
+  // Los PNG ya los tomo la revision visual: son el estado final de las escenas.
   const thin = findThinLayouts(pngs, plan, resolveFfmpeg());
   if (thin.length) {
     const detalle = thin
@@ -2948,12 +3076,14 @@ export async function generateItem(cfg, store, itemId, { log: logExterno, deps: 
       applyFonts(projectDir, plan, { log });
       store.beat(item.id, "check");
       costUsd += await checkAndRepair(cfg, store, item, formatCfg, brief, plan, projectDir, indexHtml, { log, deps, brand });
+      const revisado = await reviewAndRepair(cfg, store, item, formatCfg, brief, plan, projectDir, indexHtml, { log, deps, brand });
+      costUsd += revisado.cost;
       store.beat(item.id, "render");
 
       const built =
         plan.kind === "motion"
           ? await buildVideo(cfg, item, brief, plan, projectDir, contentDir, { log, deps })
-          : await buildStills(cfg, item, plan, projectDir, contentDir, { log, deps });
+          : await buildStills(cfg, item, plan, projectDir, contentDir, revisado.pngs, { log, deps });
       assetPath = built.assetPath;
       previewPath = built.previewPath;
 

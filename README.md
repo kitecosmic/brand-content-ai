@@ -320,9 +320,13 @@ reparaciones mecánicas del linter van al modelo chico:
   "copy":    "MiniMax-M3",
   "compose": "MiniMax-M3",
   "repair":  "MiniMax-M3",
+  "review":  "MiniMax-M3",
   "digest":  "MiniMax-M3"
 }
 ```
+
+`review` es el modelo que **mira** las escenas fotografiadas (tiene que aceptar
+imágenes); `compose` ya no escribe HTML, elige layouts.
 
 Todo en M3 por calidad consistente: la diferencia de costo entre modelos no
 compensa el ruido cuando el digest dice una cosa y el brief/compose dice otra.
@@ -337,16 +341,24 @@ se duplica. Si un modelo no tiene pricing configurado, su `cost_usd` queda en
 
 `npm run costs` muestra el gasto real por tipo de operación. El propio render
 de HyperFrames no cuesta nada (es Chrome local); lo que se paga es que el
-modelo escriba la composición y, cuando `check` falla, que la repare.
+modelo elija y rellene los layouts, que mire las escenas fotografiadas y,
+cuando algo falla, que lo repare.
 
 Dónde se va la plata, en orden:
 
-1. **Compose por escena** — cada llamada recarga el system prompt y re-inlinia
-   `frame.md` + `reference.html` aunque escriba una sola escena. Por eso las
-   escenas van de a dos por llamada (`limits.scenesPerCall: 2`): el costo fijo
-   se amortiza y las sesiones concurrentes bajan de 6 a 3 (que a la vez evita
-   los timeouts masivos que se ven con seis llamadas en paralelo).
-2. **Reparaciones (cuando `check` falla)** — son mecánicas (aplicar el
+1. **Compose** — una llamada JSON por pieza: el modelo elige un layout
+   prefabricado por escena (`src/lib/layouts.mjs`: hero, statement, stat,
+   split, cues, steps, cta) y rellena sus huecos con el copy del brief; el
+   código renderiza el HTML. Es barato (nada de 300 líneas de HTML por escena)
+   y es lo que hace que las piezas se lean como una serie, en cualquier marca:
+   los layouts no traen un solo color ni familia propios, todo sale de la paleta
+   y las tipografías del `frame.md` de la marca.
+2. **Revisión visual** — cada escena se fotografía y el modelo de visión la
+   mira contra una lista corta (palabras partidas, texto cortado, solapes,
+   mitades vacías, copy faltante). Unos 2k tokens por foto. Si observa algo, la
+   reparación recibe la foto adjunta y vuelve a fotografiarse; hasta
+   `limits.reviewTurns` (2) vueltas, y agotarlas no frena la pieza.
+3. **Reparaciones (cuando `check` falla)** — son mecánicas (aplicar el
    dictamen del linter). También van a M3: el ahorro de un modelo chico no
    compensa la inconsistencia con el resto del flujo. Van en una sola
    conversación por sesión de check, con el prefijo largo (frame.md, la
@@ -354,7 +366,7 @@ Dónde se va la plata, en orden:
    (`cache_control`): cada vuelta lo repite y el endpoint lo cobra a precio de
    lectura de cache. Cuántos tokens vinieron del cache queda en la fila de
    `runs` de cada vuelta.
-3. **Brief** — una llamada por pieza.
+4. **Brief** — una llamada por pieza.
 
 El regulador más grande es el mix: un video o carrusel cuesta ~20× lo que un
 post de texto, así que bajarlos en `calendar.mix` (o menos escenas por pieza)
@@ -370,6 +382,7 @@ src/lib/
   config.mjs          config + .env + utilidades de fecha
   store.mjs           SQLite: marcas, items, revisiones, fuentes, costos
   modelo.mjs          wrapper HTTP del backend MiniMax (formato Anthropic)
+  layouts.mjs         los layouts prefabricados de escena, para cualquier marca
   brand.mjs           crear e iterar marcas: identidad, frame.md, proyecto base
   site.mjs            leer un sitio (texto, colores, tipografias) sin dependencias
   fonts.mjs           Google Fonts -> CSS con las fuentes embebidas en base64

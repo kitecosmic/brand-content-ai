@@ -67,7 +67,10 @@
     "copy": "MiniMax-M3",
     "compose": "MiniMax-M3",
     "repair": "MiniMax-M3",
+    "review": "MiniMax-M3",
     "digest": "MiniMax-M3",
+    "$compose": "Compose ya no escribe HTML: elige un layout prefabricado por escena (src/lib/layouts.mjs) y rellena sus huecos con el copy del brief, en una llamada JSON. La maquetacion la resuelve el codigo, igual para todas las marcas.",
+    "$review": "Revision visual: tras el check se fotografia cada escena y este modelo la mira (tiene que aceptar imagenes) buscando palabras partidas, texto cortado, solapes, mitades vacias, copy faltante. Lo que encuentra vuelve a la reparacion con la foto adjunta. Las fotos viajan solo en esa vuelta: el historial guarda un marcador, nunca base64.",
     "$brief": "El brief define la narrativa y las escenas: es UNA llamada por pieza y es donde se decide si el contenido es bueno. M3 es el default por calidad consistente.",
     "$repair": "Las reparaciones de 'hyperframes check' aplican el dictamen del linter. Tambien en M3: las reparaciones son chicas en tokens, el ahorro de un modelo chico no se nota y la consistencia con el resto del flujo vale mas."
   },
@@ -107,14 +110,13 @@
     "$repairTurns": "Vueltas de la conversacion de reparacion cuando 'hyperframes check' falla: el modelo reescribe, se corre el check, y el resultado le vuelve como mensaje siguiente de la MISMA conversacion, asi ve si su arreglo sirvio. Cada vuelta es una llamada al modelo (recomponer una escena descartada tambien cuenta). Si se agotan, la pieza falla en fase check, que se reintenta (retriesPerItem) reusando las escenas y lo aprendido. Antes eran 2 parches a ciegas.",
     "repairTokenBudget": 600000,
     "$repairTokenBudget": "Tope de tokens (entrada + salida + cache) acumulados en una conversacion de reparacion, porque el historial crece en cada vuelta. Con el prefijo (frame.md, referencia, escenas) marcado como cacheable, una vuelta de un video de 7 escenas ronda los 50-80k; 600k da aire para las 4 vueltas y corta antes de que una conversacion descontrolada cueste mas que la pieza.",
+    "reviewTurns": 2,
+    "$reviewTurns": "Vueltas de revision visual (fotografiar, mirar, reparar con la foto a la vista) despues de que el check pasa. Cada vuelta es un snapshot (menos de un minuto) mas una llamada al modelo de vision (~2k tokens por escena) y, si hay observaciones, una reparacion. Agotarlas NO frena la pieza: se renderiza igual y las observaciones quedan en la bitacora. 0 apaga la revision (los stills igual se fotografian, porque la foto es el entregable).",
     "modelTimeoutMs": 900000,
     "$modelTimeoutMs": "Timeout por llamada al modelo. 15 minutos es generoso a proposito: un compose largo tarda minutos y cortarlo antes tira a la basura lo pagado. La contra es que un endpoint que acepta la conexion y no contesta se hace esperar los 15 minutos completos.",
     "jobStaleSeconds": 120,
     "$jobStaleSeconds": "Segundos sin latido para dar un trabajo por muerto. Con latido cada 20s, 120 tolera un tropiezo sin declarar muerto algo que sigue vivo.",
-    "scenesPerCall": 2,
-    "$scenesPerCall": "Cuantas composiciones escribe UNA llamada de compose. Cada llamada recarga ~30k tokens de contexto y relee frame.md + reference.html: escribir 2 escenas por llamada amortiza ese costo fijo (~-20/30% del compose) y ademas baja de 6 a 3 las sesiones concurrentes. 1 = como antes.",
-    "maxConcurrentScenes": 3,
-    "$maxConcurrentScenes": "Tope de llamadas de compose en paralelo. Con el backend HTTP cada llamada es un fetch (no un proceso de 350 MB), asi que lo que se satura son los limites de la API, no la RAM: por eso este numero manda tal cual. 0 = default (3). Con scenesPerCall 2 y tope 3, un carrusel de 6 va en 3 lotes de 2 — seis en paralelo terminaron en timeouts masivos en la primera corrida real."
+    "$scenesPerCall": "Ya no aplica (se ignora si una config local lo trae): compose es una sola llamada JSON por pieza, no una por lote de escenas."
   },
   "web": {
     "port": 4317,

@@ -94,6 +94,9 @@ function makeEnv({ withKnowledge = true } = {}) {
       referenceProject: reference,
       cliVersion: "0.7.109",
     },
+    // La revision visual pide fotos y un modelo con vision: los tests que la
+    // prueban la encienden a proposito.
+    limits: { ...REAL_CONFIG.limits, reviewTurns: 0 },
   };
 
   const store = openStore(cfg.paths.db);
@@ -220,6 +223,37 @@ function videoBrief(n = 6) {
     preview_at_seconds: 12,
     caption: "video caption",
     facts_used: ["Postgres con pgvector incluido"],
+  };
+}
+
+/**
+ * Un plan de layouts valido para las escenas que lista el prompt del
+ * planificador: alterna layouts (el parser rechaza repetir el de la escena
+ * anterior) y rellena lo minimo que cada uno exige.
+ */
+function planDesdePrompt(prompt) {
+  const files = [...prompt.matchAll(/^### scene \d+ of \d+ — file: (\S+)$/gm)].map((m) => m[1]);
+  const ciclo = ["hero", "statement", "cues", "split"];
+  return {
+    scenes: files.map((file, i) => {
+      const layout = ciclo[i % ciclo.length];
+      const base = { file, layout, register: "dark", display: `line ${i + 1}`, accent_word: "line" };
+      if (layout === "cues") return { ...base, cues: ["one", "two"] };
+      if (layout === "split") return { ...base, rows: [{ label: "a", value: "b" }, { label: "c", value: "d" }] };
+      return base;
+    }),
+  };
+}
+
+/**
+ * Stub de runModeloJSON: el brief para el prompt del brief, un plan de layouts
+ * para el del planificador (compose). `calls` acumula { prompt, opts, esPlan }.
+ */
+function jsonStub(brief, calls = []) {
+  return async (prompt, opts = {}) => {
+    const esPlan = prompt.includes("# Layout catalog");
+    calls.push({ prompt, opts, esPlan });
+    return { data: esPlan ? planDesdePrompt(prompt) : brief, costUsd: 0.1, ms: 1, model: "stub" };
   };
 }
 
@@ -659,8 +693,7 @@ test("check: la primera reparacion apunta al archivo con el error bloqueante, no
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub(composeCalls),
+      runModeloJSON: jsonStub(carouselBrief(6)),
       runModeloChat: async (mensajes, opts) => {
         const r = await chatStub(chatCalls)(mensajes, opts);
         escritos.push(...[...r.text.matchAll(/^(compositions\/frames\/[\w.-]+\.html)$/gm)].map((m) => m[1]));
@@ -700,8 +733,7 @@ test("check: el modelo ve el resultado de su arreglo en la misma conversacion y 
 
   await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub(composeCalls),
+      runModeloJSON: jsonStub(carouselBrief(6), composeCalls),
       runModeloChat: chatStub(chatCalls),
       hyperframes: hyperframesStub(cliCalls, [
         () => checkFail({ file: "compositions/frames/03-slide-role-3.html" }),
@@ -723,8 +755,8 @@ test("check: el modelo ve el resultado de su arreglo en la misma conversacion y 
   assert.match(seg, /05-slide-role-5.html/);
   assert.match(seg, /# Resolved by your rewrite \(do not touch again\): content_overlap in 03-slide-role-3.html/);
   assert.doesNotMatch(seg, /SURVIVED/);
-  // No se recompuso nada: compose fue solo el inicial (6 slides de a 2 = 3 lotes).
-  assert.equal(composeCalls.length, 3);
+  // No se recompuso nada: una sola llamada de planificacion de layouts.
+  assert.equal(composeCalls.filter((c) => c.esPlan).length, 1);
 });
 
 test("check: la misma firma escala — repara, avisa que sobrevivio, recompone la escena, y a la cuarta corta", async () => {
@@ -737,8 +769,7 @@ test("check: la misma firma escala — repara, avisa que sobrevivio, recompone l
 
   const err = await generateWithRetry(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub(composeCalls),
+      runModeloJSON: jsonStub(carouselBrief(6), composeCalls),
       runModeloChat: chatStub(chatCalls),
       // Siempre el mismo error, mismo selector, mismo t.
       hyperframes: hyperframesStub(cliCalls, [() => checkFail({ warnings: 2 })]),
@@ -758,14 +789,17 @@ test("check: la misma firma escala — repara, avisa que sobrevivio, recompone l
   assert.match(chatCalls[1].texto, /You rewrote this file and the linter still reports the exact same selector and time \(seen 2x\)/);
   assert.match(chatCalls[1].texto, /Do not apply the same fix again/);
 
-  // La tercera vez se descarto la escena y se recompuso desde el brief: una
-  // llamada de compose extra, SOLO para 03, con la nota de por que.
-  assert.equal(composeCalls.length, 4, "3 lotes iniciales + 1 recomposicion");
-  const recompose = composeCalls[3].prompt;
-  assert.match(recompose, /This exact file was rejected: compositions\/frames\/03-slide-role-3.html/);
+  // La tercera vez se descarto la escena y se recompuso desde el brief: otra
+  // llamada al planificador, SOLO para 03, con la nota de por que.
+  const planes = composeCalls.filter((c) => c.esPlan);
+  assert.equal(planes.length, 2, "plan inicial + recomposicion");
+  const recompose = planes[1].prompt;
+  assert.match(recompose, /The previous staging of compositions\/frames\/03-slide-role-3\.html was rejected/);
   assert.match(recompose, /failed `hyperframes check` 3 times in a row/);
-  assert.match(recompose, /compose the scene again from the brief with a different staging/);
-  assert.match(recompose, /Write exactly ONE file: compositions\/frames\/03-slide-role-3.html/);
+  assert.match(recompose, /Choose a DIFFERENT layout for it this time/);
+  assert.match(recompose, /### scene 3 of 6 — file: compositions\/frames\/03-slide-role-3\.html/);
+  assert.doesNotMatch(recompose, /### scene 1 of 6/, "las otras escenas no se vuelven a planificar");
+  assert.match(recompose, /# The other scenes of the piece/);
   const notas = JSON.parse(readFileSync(join(dir, ".bca", "layout-notes.json"), "utf8"));
   assert.ok(notas["compositions/frames/03-slide-role-3.html"]);
 
@@ -789,8 +823,7 @@ test("check: la historia de firmas se borra cuando el check pasa", async () => {
   const dir = join(cfg.hyperframes.projectsDir, item.id);
   await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub([]),
+      runModeloJSON: jsonStub(IMAGE_BRIEF),
       runModeloChat: chatStub([]),
       hyperframes: hyperframesStub([], [() => checkFail({ file: "compositions/frames/01-one-line-on-an-ink-black-fie.html" }), CHECK_OK]),
     },
@@ -808,8 +841,7 @@ test("check: si el modelo no devuelve archivos se le reclama sin volver a correr
 
   await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub([]),
+      runModeloJSON: jsonStub(IMAGE_BRIEF),
       // Primera vuelta: prosa sin fences. Segunda: el archivo.
       runModeloChat: chatStub(chatCalls, { elegir: (texto) => (++vuelta === 1 ? [] : ["compositions/frames/01-one-line-on-an-ink-black-fie.html"]) }),
       hyperframes: hyperframesStub(cliCalls, [() => checkFail({ file: "compositions/frames/01-one-line-on-an-ink-black-fie.html" }), CHECK_OK]),
@@ -834,8 +866,7 @@ test("check: agotar las vueltas falla con fase check, que si se reintenta reusan
 
   const err = await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub(composeCalls),
+      runModeloJSON: jsonStub(carouselBrief(6)),
       runModeloChat: chatStub(chatCalls),
       // Cada check se queja de algo distinto: hay avance, pero no alcanza.
       hyperframes: hyperframesStub(cliCalls, [() => checkFail({ file: `compositions/frames/0${(n++ % 6) + 1}-slide-role-${((n - 1) % 6) + 1}.html`, selector: `#s${n}` })]),
@@ -862,6 +893,192 @@ function safeCount(dir) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// revision visual
+// ---------------------------------------------------------------------------
+
+/**
+ * Stub de runModeloChat para la revision visual: `veredictos` es la lista de
+ * respuestas del revisor (una por llamada de revision, en orden); las llamadas
+ * de reparacion devuelven fences para los archivos que el mensaje marca como
+ * editables. Guarda cada llamada con sus mensajes tal como llegaron.
+ */
+function reviewStub(calls, veredictos) {
+  let n = 0;
+  return async (mensajes, opts = {}) => {
+    const last = mensajes.at(-1);
+    const bloques = Array.isArray(last.content) ? last.content : [{ type: "text", text: last.content }];
+    const texto = bloques.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    const imagenes = bloques.filter((b) => b.type === "image");
+    calls.push({ mensajes: mensajes.map((m) => ({ ...m })), texto, imagenes, opts });
+    if (texto.startsWith("Visual review of")) {
+      const v = veredictos[Math.min(n, veredictos.length - 1)];
+      n++;
+      return { text: JSON.stringify(v), costUsd: 0.001, ms: 5, model: "stub", inputTokens: 100, outputTokens: 20, mensajes: [...mensajes, { role: "assistant", content: JSON.stringify(v) }] };
+    }
+    const files = [...texto.matchAll(/^- (compositions\/frames\/[\w.-]+\.html)/gm)].map((m) => m[1]);
+    const body = files.map((f) => ["```html", f, "<template></template>", "```"].join("\n")).join("\n\n");
+    return { text: body, costUsd: 0.02, ms: 10, model: "stub", inputTokens: 1000, outputTokens: 200, mensajes: [...mensajes, { role: "assistant", content: body }] };
+  };
+}
+
+/** hyperframes stub que pasa el check y fotografia lo que se le pida. */
+function fotografo(cliCalls) {
+  let foto = 0;
+  return async (_cfg, projectDir, args) => {
+    cliCalls.push(args[0]);
+    if (args[0] === "check") return { code: 0, stdout: '{"ok":true}', stderr: "" };
+    if (args[0] === "render") {
+      const out = join(projectDir, "renders", "video.mp4");
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, "mp4");
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    foto++;
+    const outDir = join(projectDir, args[args.indexOf("-o") + 1]);
+    mkdirSync(outDir, { recursive: true });
+    const times = args[args.indexOf("--at") + 1].split(",");
+    times.forEach((t, i) => writeFileSync(join(outDir, `frame-0${i}-at-${t}s.png`), `png-${foto}-${i}`));
+    return { code: 0, stdout: "", stderr: "" };
+  };
+}
+
+test("revision visual: la foto va al modelo, la observacion vuelve con la imagen, y el historial no guarda base64", async () => {
+  const { cfg: base, store } = makeEnv();
+  const cfg = { ...base, limits: { ...base.limits, reviewTurns: 2 } };
+  const item = addItem(store, { format: "carousel" });
+  const plan = planScenes({ format: "carousel", formatCfg: cfg.formats.carousel, brief: carouselBrief(6), itemId: item.id });
+  const tercera = plan.scenes[2].file;
+  const chatCalls = [];
+  const cliCalls = [];
+  const mal = { scenes: [{ file: tercera, ok: false, problems: [{ code: "word_broken", detail: "'otra' se parte en 'otr / a'", fix: "bajar el cuerpo o partir antes" }] }] };
+  const bien = { scenes: plan.scenes.map((s) => ({ file: s.file, ok: true, problems: [] })) };
+
+  const res = await generateItem(cfg, store, item.id, {
+    deps: {
+      runModeloJSON: jsonStub(carouselBrief(6)),
+      // dos revisiones con la misma observacion, la tercera limpia
+      runModeloChat: reviewStub(chatCalls, [mal, mal, bien]),
+      hyperframes: fotografo(cliCalls),
+    },
+  });
+
+  assert.equal(store.getItem(item.id).status, "built");
+  // check -> foto -> revision -> reparacion -> check -> foto -> revision -> reparacion -> check -> foto -> revision ok -> stills
+  assert.deepEqual(cliCalls, ["check", "snapshot", "check", "snapshot", "check", "snapshot"]);
+  const revisiones = chatCalls.filter((c) => c.texto.startsWith("Visual review of"));
+  const reparaciones = chatCalls.filter((c) => !c.texto.startsWith("Visual review of"));
+  assert.equal(revisiones.length, 3);
+  assert.equal(reparaciones.length, 2);
+
+  // La revision recibe una foto por escena y el copy esperado.
+  assert.equal(revisiones[0].imagenes.length, 6);
+  assert.match(revisiones[0].texto, /Scene 3 — file: compositions\/frames\/03-slide-role-3\.html/);
+  assert.match(revisiones[0].texto, /Expected copy: .*display: line 3/);
+  assert.equal(revisiones[0].imagenes[0].source.media_type, "image/png");
+  assert.equal(Buffer.from(revisiones[0].imagenes[2].source.data, "base64").toString(), "png-1-2", "la foto de la escena 3, de la primera tanda");
+
+  // La reparacion recibe SOLO la escena observada, con su foto adjunta y el problema.
+  const r1 = reparaciones[0];
+  assert.match(r1.texto, /A visual review of the rendered scenes found problems/);
+  assert.match(r1.texto, /word_broken: 'otra' se parte/);
+  assert.match(r1.texto, new RegExp(`- ${tercera}  \\(composition id`));
+  assert.doesNotMatch(r1.texto, /01-slide-role-1\.html/, "las escenas sin observaciones no viajan");
+  assert.equal(r1.imagenes.length, 1);
+  assert.match(r1.texto, /Snapshot of compositions\/frames\/03-slide-role-3\.html at/);
+  assert.equal(r1.mensajes.length, 1);
+
+  // Segunda vuelta: la conversacion sigue, pero la foto anterior ya no viaja —
+  // en su lugar hay un marcador de texto — y la nueva foto es la nueva tanda.
+  const r2 = reparaciones[1];
+  assert.equal(r2.mensajes.length, 3, "apertura + respuesta + seguimiento");
+  const primero = r2.mensajes[0].content;
+  assert.ok(Array.isArray(primero));
+  assert.ok(!primero.some((b) => b.type === "image"), "la imagen de la vuelta 1 no se reenvia");
+  assert.ok(primero.some((b) => b.type === "text" && /\[image 1 was attached in this turn\]/.test(b.text)));
+  assert.equal(r2.imagenes.length, 1);
+  assert.equal(Buffer.from(r2.imagenes[0].source.data, "base64").toString(), "png-2-2", "la foto nueva, despues de la reparacion");
+  assert.match(r2.texto, /photographed again after your rewrite/);
+
+  // Nada de base64 en la bitacora ni en runs; y la bitacora cuenta lo que paso.
+  const bitacora = store.logsDe(item.id).map((l) => l.texto).join("\n");
+  assert.doesNotMatch(bitacora, /base64|cG5n/);
+  assert.match(bitacora, /revision visual: 1 escena\(s\) con observaciones/);
+  assert.match(bitacora, /03-slide-role-3\.html: word_broken/);
+  assert.match(bitacora, /revision visual: sin observaciones/);
+  const runs = store.db.prepare("SELECT kind, detail FROM runs WHERE item_id = ?").all(item.id);
+  assert.equal(runs.filter((r) => r.kind === "review").length, 3);
+  assert.ok(runs.some((r) => /reparacion visual, vuelta 1/.test(r.detail)));
+  assert.ok(runs.every((r) => !/cG5n/.test(String(r.detail))));
+
+  // Los slides entregados salen de la ultima tanda de fotos.
+  const slides = carouselSlidePaths(res.assetPath, 6);
+  assert.equal(readFileSync(slides[2], "utf8"), "png-3-2");
+});
+
+test("revision visual: agotar las vueltas no frena la pieza, se renderiza con las observaciones a la vista", async () => {
+  const { cfg: base, store } = makeEnv();
+  const cfg = { ...base, limits: { ...base.limits, reviewTurns: 1 } };
+  const item = addItem(store, { format: "video" });
+  const plan = planScenes({ format: "video", formatCfg: cfg.formats.video, brief: videoBrief(6), itemId: item.id });
+  const chatCalls = [];
+  const cliCalls = [];
+  const mal = { scenes: [{ file: plan.scenes[0].file, ok: false, problems: [{ code: "empty_area", detail: "la mitad derecha vacia" }] }] };
+
+  const res = await generateItem(cfg, store, item.id, {
+    deps: {
+      runModeloJSON: jsonStub(videoBrief(6)),
+      runModeloChat: reviewStub(chatCalls, [mal]),
+      ffmpeg: async () => false,
+      hyperframes: fotografo(cliCalls),
+    },
+  });
+
+  assert.equal(store.getItem(item.id).status, "built");
+  assert.ok(res.assetPath.endsWith("video.mp4"));
+  // una revision, una reparacion, una segunda revision (sigue mal) y se rinde: render
+  assert.deepEqual(cliCalls, ["check", "snapshot", "check", "snapshot", "render", "snapshot"]);
+  assert.equal(chatCalls.filter((c) => c.texto.startsWith("Visual review of")).length, 2);
+  const bitacora = store.logsDe(item.id).map((l) => l.texto).join("\n");
+  assert.match(bitacora, /se agotaron las 1 vuelta\(s\) de revision visual: se renderiza igual/);
+});
+
+test("revision visual: si el revisor no devuelve JSON se sigue sin revisar, y con reviewTurns 0 no se fotografia un video", async () => {
+  const { cfg: base, store } = makeEnv();
+  const cfg = { ...base, limits: { ...base.limits, reviewTurns: 2 } };
+  const item = addItem(store, { format: "image" });
+  const chatCalls = [];
+  await generateItem(cfg, store, item.id, {
+    deps: {
+      runModeloJSON: jsonStub(IMAGE_BRIEF),
+      runModeloChat: async (mensajes) => {
+        chatCalls.push(mensajes);
+        return { text: "no puedo ver la imagen", costUsd: 0, ms: 1, model: "stub", mensajes };
+      },
+      hyperframes: fotografo([]),
+    },
+  });
+  assert.equal(store.getItem(item.id).status, "built");
+  assert.equal(chatCalls.length, 2, "se le pide dos veces y despues se sigue");
+  assert.match(store.logsDe(item.id).map((l) => l.texto).join("\n"), /sin veredicto visual: se sigue sin revisar/);
+
+  // Video con la revision apagada: ni foto ni modelo antes del render.
+  const otro = addItem(store, { id: "otro-video", format: "video" });
+  const cli = [];
+  await generateItem(base, store, otro.id, {
+    deps: {
+      runModeloJSON: jsonStub(videoBrief(5)),
+      runModeloChat: async () => {
+        throw new Error("no deberia llamarse");
+      },
+      ffmpeg: async () => false,
+      hyperframes: fotografo(cli),
+    },
+  });
+  assert.deepEqual(cli, ["check", "render", "snapshot"]);
+});
+
+
 test("rescueStuck reencola lo que quedo en building de una corrida muerta", () => {
   const { store } = makeEnv();
   const item = addItem(store);
@@ -881,13 +1098,14 @@ test("generateWithRetry reintenta un fallo de compose y no uno de brief", async 
 
   const res = await generateWithRetry(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
-      // El primer compose no devuelve nada parseable: falla en fase compose y
-      // el segundo intento tiene que salir solo.
-      runModelo: async (prompt, opts) => {
-        intentos += 1;
-        if (intentos === 1) return { text: "perdon, no puedo", costUsd: 0.01, ms: 1, model: "stub" };
-        return composerStub(composeCalls)(prompt, opts);
+      // Los dos primeros planes de layouts no validan (compose se lo reclama
+      // una vez y despues falla en fase compose); el segundo intento del item
+      // tiene que salir solo.
+      runModeloJSON: async (prompt, opts) => {
+        if (prompt.includes("# Layout catalog") && ++intentos <= 2) {
+          return { data: { scenes: [] }, costUsd: 0.01, ms: 1, model: "stub" };
+        }
+        return jsonStub(IMAGE_BRIEF, composeCalls)(prompt, opts);
       },
       hyperframes: async (_cfg, projectDir, args) => {
         if (args[0] === "check") return { code: 0, stdout: '{"ok":true}', stderr: "" };
@@ -899,7 +1117,7 @@ test("generateWithRetry reintenta un fallo de compose y no uno de brief", async 
     },
   });
 
-  assert.equal(intentos, 2, "el fallo de compose se reintenta una vez");
+  assert.equal(intentos, 3, "dos planes invalidos agotan compose; el reintento del item planifica de nuevo y sale");
   assert.equal(store.getItem(item.id).status, "built");
   assert.ok(existsSync(res.assetPath));
 
@@ -1026,8 +1244,7 @@ test("carousel: un PNG por slide, preview en el primero", async () => {
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: brief, costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub(composeCalls),
+      runModeloJSON: jsonStub(brief),
       hyperframes: async (_cfg, projectDir, args) => {
         cliCalls.push(args[0]);
         if (args[0] === "check") return { code: 0, stdout: '{"ok":true}', stderr: "" };
@@ -1065,8 +1282,7 @@ test("video: MP4 + frame de preview, y degrada con elegancia si no hay ffmpeg", 
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: videoBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub(composeCalls),
+      runModeloJSON: jsonStub(videoBrief(6)),
       ffmpeg: async () => false, // ffmpeg ausente
       hyperframes: async (_cfg, projectDir, args) => {
         cliCalls.push(args[0]);
@@ -1099,8 +1315,7 @@ test("video: si no hay ni ffmpeg ni snapshot, preview_path cae en el propio MP4"
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runModeloJSON: async () => ({ data: videoBrief(5), costUsd: 0.1, ms: 1, model: "stub" }),
-      runModelo: composerStub([]),
+      runModeloJSON: jsonStub(videoBrief(5)),
       ffmpeg: async () => false,
       hyperframes: async (_cfg, projectDir, args) => {
         if (args[0] === "check") return { code: 0, stdout: '{"ok":true}', stderr: "" };
