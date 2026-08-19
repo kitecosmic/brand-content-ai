@@ -1,0 +1,17 @@
+# Finales de linea: LF en el repo, siempre.
+#
+# El repo nacio con una mezcla —unos archivos LF y otros CRLF— y eso hace que
+# cualquier herramienta que reescriba un archivo entero (un script de edicion,
+# un formateador, un editor con otra configuracion) produzca un diff de miles de
+# lineas donde en realidad cambiaron diez. Con esto, git normaliza al guardar y
+# el diff vuelve a decir la verdad.
+*        text=auto eol=lf
+
+# Binarios: que git no toque nada adentro.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.webp   binary
+*.mp4    binary
+*.woff2  binary
+*.db     binary
