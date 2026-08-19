@@ -430,10 +430,14 @@ startWeb(cfg, store, handlers, { port?, host?, log? }) -> Promise<http.Server>
   viejas; (3) no hay nada: primera corrida, todo redirige a `/setup`.
   `startWeb` se niega a escuchar fuera de 127.0.0.1 si no hay ninguna de las
   dos. Los POST exigen mismo origen.
-- **Tour:** `/empezar` calcula sus pasos del estado real (hay key, hay marca,
-  hay hechos, hay pieza). El login manda ahi mientras falte alguno, salvo que
-  el kv tenga `ui:tour-visto = "1"` — que gana sobre el calculo, porque si no
-  el asistente volvia solo al borrar una marca de prueba.
+- **Como empezar:** `/empezar` calcula sus pasos del estado real (hay key, hay
+  marca, hay hechos, hay pieza) y **no ejecuta nada**: cada paso linkea a la
+  seccion que lo resuelve (`/ajustes`, `/marcas`, `/crear`). No agregar
+  formularios ahi — tenerlos hacia que la misma cosa se pudiera hacer en dos
+  lugares y confundia lo que se muestra con lo que se crea. Vive en el `?` de la
+  barra, no en una pestana. El login manda ahi mientras falte algun paso, salvo
+  que el kv tenga `ui:tour-visto = "1"` — que gana sobre el calculo, porque si no
+  volvia solo al borrar una marca de prueba.
 - **Acciones caras:** `/confirmar/generar` y `/confirmar/plan` son GET que
   muestran alcance y costo estimado (`store.costPorFormato()`, promedio real
   del historial) antes del POST que ejecuta. `generar-pendientes` trabaja

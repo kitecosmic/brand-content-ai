@@ -293,9 +293,7 @@ function bandaSuelta(brand) {
 }
 
 function barra({ activa, marcas, marcaActiva, tab, usuario, faltaEmpezar }) {
-  const tabs = faltaEmpezar
-    ? [{ id: "empezar", href: "/empezar", texto: "Empezar" }, ...TABS]
-    : TABS;
+  const tabs = TABS;
 
   return `${banda(activa)}
 <header class="cabecera">
@@ -333,6 +331,7 @@ function barra({ activa, marcas, marcaActiva, tab, usuario, faltaEmpezar }) {
     </nav>
 
     <div class="cabecera-fin">
+      <a class="ayuda${tab === "empezar" ? " activo" : ""}${faltaEmpezar ? " pendiente" : ""}" href="/empezar" title="Cómo empezar: los pasos y dónde se hace cada uno" aria-label="Cómo empezar">?</a>
       <button type="button" class="tema" data-tema-toggle data-libre="1" title="Cambiar entre el tema de la marca, claro y oscuro">
         <span data-tema-nombre></span>
       </button>
@@ -442,6 +441,19 @@ body{
   font-family:inherit;letter-spacing:.04em;text-transform:uppercase;
 }
 .tema:hover{border-color:var(--line-fuerte);color:var(--ink)}
+/* El signo de pregunta: la guia de como empezar, siempre a mano y sin ocupar una
+   pestana. Con algo pendiente lleva un punto, que es como se pide atencion sin
+   gritar. */
+.ayuda{
+  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  border:1px solid var(--line);color:var(--muted);text-decoration:none;
+  font-size:13px;font-weight:600;position:relative;
+}
+.ayuda:hover,.ayuda.activo{border-color:var(--line-fuerte);color:var(--ink)}
+.ayuda.pendiente::after{
+  content:"";position:absolute;top:-1px;right:-1px;width:7px;height:7px;
+  border-radius:50%;background:var(--accent);border:1.5px solid var(--bg);
+}
 .usuario{
   width:29px;height:29px;border-radius:50%;display:grid;place-items:center;
   background:var(--accent);color:var(--on-accent);text-decoration:none;
@@ -526,6 +538,29 @@ code{font-family:var(--fuente-mono);font-size:.9em;background:var(--hover);paddi
 .card{
   background:var(--surface);border:1px solid var(--line);border-radius:11px;
   padding:18px;margin-bottom:14px;box-shadow:var(--sombra);
+}
+/* Los pasos de "como empezar": el numero, que es, y el boton que lleva a la
+   seccion donde se hace. Lo hecho se apaga en vez de desaparecer — saber lo que
+   ya pasaste es parte de entender donde estas. */
+.pasos{list-style:none;display:grid;gap:10px;margin:18px 0 0;padding:0}
+.paso{
+  display:grid;grid-template-columns:26px 1fr auto;gap:14px;align-items:start;
+  background:var(--surface);border:1px solid var(--line);border-radius:11px;
+  padding:16px 18px;box-shadow:var(--sombra);
+}
+.paso-n{
+  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:700;
+}
+.paso.hecho{opacity:.7}
+.paso.hecho .paso-n{background:var(--ok);color:var(--bg)}
+.paso-texto h2{font-size:15.5px;margin:0 0 4px}
+.paso-texto p{margin:0}
+.paso-texto p + p{margin-top:6px}
+.paso > .boton{align-self:center;white-space:nowrap}
+@media (max-width:640px){
+  .paso{grid-template-columns:26px 1fr}
+  .paso > .boton{grid-column:2;justify-self:start;margin-top:10px}
 }
 .card > :last-child{margin-bottom:0}
 details.card > summary{cursor:pointer;list-style:none;user-select:none}

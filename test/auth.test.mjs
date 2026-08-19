@@ -150,30 +150,49 @@ test("sin sesion no se ve nada; con la contrasena correcta si", async () => {
   assert.equal((await get("/crear", cookie)).status, 200);
 });
 
-test("el asistente arranca en el paso pendiente y avanza al completarlo", async () => {
+test("como empezar es un mapa: dice que falta y lleva a donde se hace", async () => {
   const cookie = galleta(
     await post("/login", { email: "joel@marca.com", password: "una frase larga y facil" }),
   );
-  // Sin ?paso cae en el primero que falta; el 0 es la bienvenida.
-  let html = await (await get("/empezar", cookie)).text();
-  assert.match(html, /paso 1 de 5/);
-  assert.match(html, /Esto genera contenido con la identidad de tu marca/);
+  const html = await (await get("/empezar", cookie)).text();
 
-  html = await (await get("/empezar?paso=1", cookie)).text();
+  // Cada paso nombra su seccion y linkea a ella.
   assert.match(html, /Conectá el modelo/);
-  assert.match(html, /API key/);
-  assert.doesNotMatch(html, /Endpoint/, "el asistente no pregunta cosas avanzadas");
+  assert.match(html, /href="\/ajustes"/);
+  assert.match(html, /Creá tu marca/);
+  assert.match(html, /href="\/marcas"/);
+  assert.match(html, /Pedí tu primera pieza/);
+  assert.match(html, /href="\/crear"/);
 
-  // Guardar desde el asistente vuelve al asistente, no a la pantalla de ajustes.
-  const guardado = await post(
-    "/action/ajustes",
-    { minimax_api_key: "una-key-cualquiera", back: "/empezar?paso=2" },
-    cookie,
+  // Lo que confundia: aca NO se crea nada. La marca se crea en Marcas y la
+  // API key se carga en Ajustes; el mapa solo dice donde.
+  assert.doesNotMatch(html, /action="\/action\/marca-nueva"/, "la marca no se crea desde el mapa");
+  assert.doesNotMatch(html, /name="minimax_api_key"/, "la API key no se carga desde el mapa");
+  assert.doesNotMatch(html, /action="\/action\/sync"/, "las fuentes no se leen desde el mapa");
+
+  // El estado sale del sistema real, no de un contador de pasos.
+  await post("/action/ajustes", { minimax_api_key: "una-key-cualquiera", back: "/empezar" }, cookie);
+  assert.match(
+    await (await get("/empezar", cookie)).text(),
+    /El modelo está conectado/,
+    "el paso hecho se ve hecho",
   );
-  assert.match(guardado.headers.get("location") ?? "", /^\/empezar\?paso=2/);
+});
 
-  html = await (await get("/empezar?paso=1", cookie)).text();
-  assert.match(html, /ya está listo/, "el paso queda marcado");
+test("el signo de pregunta de la barra lleva al mapa desde cualquier pantalla", async () => {
+  const cookie = galleta(
+    await post("/login", { email: "joel@marca.com", password: "una frase larga y facil" }),
+  );
+  for (const ruta of ["/crear", "/calendario", "/marcas"]) {
+    const html = await (await get(ruta, cookie)).text();
+    assert.match(html, /class="ayuda[^"]*" href="\/empezar"/, `falta la ayuda en ${ruta}`);
+  }
+  // Y no ocupa una pestana: el mapa no es una seccion mas del panel.
+  assert.doesNotMatch(
+    await (await get("/crear", cookie)).text(),
+    /class="tab[^"]*" href="\/empezar"/,
+    "el mapa vive en el signo de pregunta, no en la navegacion",
+  );
 });
 
 test("invitar: link de un solo uso, y el invitado entra como miembro", async () => {
@@ -236,7 +255,10 @@ test("una cookie manoseada no vale", () => {
 
   assert.equal(usuarioDeSesion(s2, "secreto", buena)?.id, u.id);
   assert.equal(usuarioDeSesion(s2, "otro-secreto", buena), null, "firmada con otro secreto");
-  assert.equal(usuarioDeSesion(s2, "secreto", buena.replace(/.$/, "0")), null, "firma cambiada");
+  // El ultimo caracter cambiado por OTRO: pisarlo con un "0" fijo dejaba la
+  // firma intacta una de cada dieciseis veces, y el test fallaba solo.
+  const otraFirma = buena.slice(0, -1) + (buena.slice(-1) === "0" ? "1" : "0");
+  assert.equal(usuarioDeSesion(s2, "secreto", otraFirma), null, "firma cambiada");
   assert.equal(usuarioDeSesion(s2, "secreto", `${u.id}.${Date.now() - 1000}.x`), null, "vencida");
   assert.equal(usuarioDeSesion(s2, "secreto", ""), null);
   s2.close();

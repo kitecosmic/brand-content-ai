@@ -869,57 +869,50 @@ ${
 }
 
 /**
- * El tour, como asistente: una tarjeta a la vez.
+ * Como empezar: el mapa de los pasos, con el link a donde se hace cada uno.
  *
- * La primera versión mostraba los cuatro pasos apilados con sus formularios
- * abiertos y era un muro. Acá se ve UNA cosa, se hace, y se pasa a la
- * siguiente — que es como se lee algo que no conoces.
+ * No tiene un solo formulario, y es a proposito. Antes traia adentro el de la
+ * API key y el de la marca, y eso hacia dos cosas malas: la misma cosa se podia
+ * hacer en dos lugares distintos, y desde afuera parecia que el asistente
+ * estaba creando la marca cuando en realidad la estaba mostrando. Un cartel que
+ * dice "esto se hace alla" no se puede confundir con la cosa misma.
  *
- * El estado de cada paso se calcula del sistema real, así que el asistente se
- * puede recorrer de nuevo cuando quieras: los pasos ya hechos se ven hechos.
+ * El estado sale del sistema real, asi que sirve igual la primera vez que un
+ * mes despues: lo hecho se ve hecho, y lo que falta tiene su boton.
  */
-export function vistaEmpezar({ pasos, indice, brand }) {
-  const total = pasos.length;
-  const paso = pasos[Math.min(Math.max(indice, 0), total - 1)];
-  const n = pasos.indexOf(paso);
-  const anterior = n > 0 ? n - 1 : null;
-  const siguiente = n < total - 1 ? n + 1 : null;
+export function vistaEmpezar({ pasos }) {
+  const faltan = pasos.filter((p) => !p.hecho).length;
 
-  const puntos = pasos
-    .map((x, k) => {
-      const estado = x.hecho ? "background:var(--ok)" : k === n ? "background:var(--acento)" : "background:var(--line-fuerte)";
-      return `<a href="/empezar?paso=${k}" title="${esc(x.titulo)}" style="width:${k === n ? 26 : 9}px;height:9px;border-radius:99px;${estado};display:inline-block;transition:width .15s"></a>`;
-    })
+  const filas = pasos
+    .map(
+      (p, i) => `
+    <li class="paso${p.hecho ? " hecho" : ""}">
+      <span class="paso-n" aria-hidden="true">${p.hecho ? "&#10003;" : i + 1}</span>
+      <div class="paso-texto">
+        <h2>${esc(p.titulo)}</h2>
+        <p class="sub">${p.detalle}</p>
+        ${p.hecho && p.resumen ? `<p class="mini faint">${p.resumen}</p>` : ""}
+      </div>
+      <a class="boton${p.hecho ? " chico" : " primario"}" href="${esc(p.href)}">${esc(p.boton)}</a>
+    </li>`,
+    )
     .join("");
 
-  return `<div style="max-width:620px;margin:4vh auto 0">
-  <div class="fila" style="gap:6px;justify-content:center;margin-bottom:6px">${puntos}</div>
-  <p class="mini faint" style="text-align:center;margin-bottom:18px">paso ${n + 1} de ${total}</p>
+  return `<div style="max-width:720px;margin:3vh auto 0">
+  <h1>Cómo empezar</h1>
+  <p class="sub">${
+    faltan
+      ? `${pasos.length} pasos hasta tu primera pieza${faltan < pasos.length ? `; te ${faltan === 1 ? "queda" : "quedan"} ${faltan}` : ""}. Cada uno se hace en su sección — acá está el mapa.`
+      : "Está todo listo. El mapa queda acá por si sumás otra marca o querés volver sobre algún paso."
+  }</p>
 
-  <div class="card" style="padding:28px">
-    ${paso.hecho ? '<span class="chip built" style="margin-bottom:12px">ya está listo</span>' : ""}
-    <h1 style="font-size:24px;margin-bottom:10px">${esc(paso.titulo)}</h1>
-    <div class="sub" style="margin-bottom:20px">${paso.detalle}</div>
+  <ol class="pasos">${filas}</ol>
 
-    ${paso.hecho && paso.resumen ? `<div class="aviso bien" style="margin-bottom:18px">${paso.resumen}</div>` : ""}
-    ${!paso.hecho && paso.cuerpo ? paso.cuerpo : ""}
-    ${paso.hecho && siguiente !== null ? `<a class="boton primario" href="/empezar?paso=${siguiente}">Seguir</a>` : ""}
-    ${paso.final ? `<a class="boton primario" href="/crear">Crear mi primera pieza</a>` : ""}
-  </div>
-
-  <div class="entre" style="margin-top:14px">
-    <div>${anterior !== null ? `<a class="boton chico" href="/empezar?paso=${anterior}">&larr; Atras</a>` : ""}</div>
-    <div class="fila">
-      ${
-        !paso.hecho && !paso.final && siguiente !== null
-          ? `<a class="mini faint" href="/empezar?paso=${siguiente}">saltar por ahora</a>`
-          : ""
-      }
-      <a class="mini faint" href="/crear">salir del asistente</a>
-      <form method="post" action="/action/tour-listo">
-        <button class="chico" type="submit" title="El asistente deja de aparecer al entrar. Vas a poder volver a el desde /empezar.">No mostrarlo mas</button>
-      </form>
-    </div>
+  <div class="entre" style="margin-top:18px">
+    <a class="mini faint" href="/crear">Ir al panel</a>
+    <form method="post" action="/action/tour-listo">
+      <button class="chico" type="submit" title="Deja de aparecer al entrar. Siempre vuelve desde el signo de pregunta de la barra de arriba.">No volver a mostrarlo</button>
+    </form>
   </div>
 </div>`;
 }

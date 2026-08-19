@@ -286,7 +286,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     if (ruta === "/nuevo") return vistaDeNueva(res, marco, marcaActiva);
     if (ruta === "/confirmar/generar") return vistaDeConfirmarGenerar(res, marco, marcaActiva);
     if (ruta === "/confirmar/plan") return vistaDeConfirmarPlan(res, marco, marcaActiva, url);
-    if (ruta === "/empezar") return vistaDeEmpezar(res, marco, marcaActiva, url);
+    if (ruta === "/empezar") return vistaDeEmpezar(res, marco, marcaActiva);
     if (ruta === "/equipo") return vistaDeEquipo(res, marco, usuario, url);
     if (ruta === "/ajustes") {
       if (usuario.role !== "owner") {
@@ -557,115 +557,71 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   }
 
   /**
-   * El asistente de primera corrida. Los pasos se calculan del estado real: si
-   * borras la marca, el paso vuelve a estar pendiente y el asistente lo sabe.
+   * La guia de como empezar.
+   *
+   * No hace nada: cuenta que falta y lleva a donde se hace. Antes traia los
+   * formularios adentro —la API key, la URL de la marca— y eso confundia mas de
+   * lo que ayudaba: la misma cosa se hacia en dos lugares distintos y, desde
+   * afuera, no quedaba claro si el asistente estaba creando la marca o
+   * mostrandola. Ahora cada cosa se hace en su seccion y esto es el mapa.
+   *
+   * Los pasos se calculan del estado real, asi que sirve igual la primera vez
+   * que un mes despues: lo que ya esta hecho se ve hecho.
    */
-  function vistaDeEmpezar(res, marco, brand, url) {
+  function vistaDeEmpezar(res, marco, brand) {
     const ahora = loadConfig();
     const marcas = store.listBrands();
     const fuentes = brand ? store.allKnowledge(brand.id).filter((f) => f.digest) : [];
     const hechas = store.listItems({ limit: 500 }).filter((i) => i.asset_path);
-    const hayModelo = modeloConfigurado(ahora);
+    const hechos = fuentes.reduce((a, f) => a + (f.facts?.length ?? 0), 0);
 
     const pasos = [
       {
-        titulo: "Esto genera contenido con la identidad de tu marca",
-        detalle: `<p>En tres minutos vas a tener tu primera pieza. El camino es corto:</p>
-          <ul style="margin:0 0 4px;padding-left:20px">
-            <li class="mini">conectás el modelo que escribe y compone</li>
-            <li class="mini">le das la URL de tu marca y saca de ahí los colores, la tipografía y el tono</li>
-            <li class="mini">le pedís una pieza y la mirás salir</li>
-          </ul>`,
-        hecho: false,
-        cuerpo: `<a class="boton primario" href="/empezar?paso=1">Empezar</a>`,
-      },
-      {
         titulo: "Conectá el modelo",
         detalle:
-          "<p>Brand Content AI escribe y compone con MiniMax. Su API key sale de " +
+          "Brand Content AI escribe y compone con MiniMax. Su API key sale de " +
           '<a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> ' +
-          "&rarr; API Keys. Es lo único imprescindible; el resto se configura después.</p>",
-        hecho: hayModelo,
-        resumen: "El modelo ya está conectado.",
-        cuerpo: `<form method="post" action="/action/ajustes">
-            <input type="hidden" name="back" value="/empezar?paso=2">
-            <div class="campo">
-              <div class="entre" style="margin-bottom:6px">
-                <label for="minimax_api_key" style="margin:0">API key</label>
-                <button type="button" class="chico" data-ver="minimax_api_key" data-libre="1" style="padding:2px 8px;font-size:12px">ver</button>
-              </div>
-              <input type="password" id="minimax_api_key" name="minimax_api_key" placeholder="pegala acá" required autocomplete="off">
-              <div class="ayuda">Se guarda en la base de este servidor y no sale de acá.</div>
-            </div>
-            <button class="primario" type="submit" data-esperando="guardando...">Guardar y seguir</button>
-          </form>`,
+          "&rarr; API Keys. Es lo único imprescindible: sin el modelo no se puede armar ni una marca.",
+        hecho: modeloConfigurado(ahora),
+        resumen: "El modelo está conectado.",
+        href: "/ajustes",
+        boton: "Ir a Ajustes",
       },
       {
         titulo: "Creá tu marca",
         detalle:
-          "<p>Con la URL de tu sitio saca los colores, la tipografía, el tono y de qué habla el producto. " +
-          "Después la ajustás hablando: <em>mas oscuro, el acento en violeta</em>.</p>",
+          "Con la URL de tu sitio saca los colores, la tipografía, el tono y de qué habla el producto. " +
+          "Después la ajustás hablando: <em>más oscuro, el acento en violeta</em>.",
         hecho: marcas.length > 0,
         resumen: brand
-          ? `Ya tenes <strong>${esc(brand.name)}</strong>${brand.site ? ` (${esc(brand.site)})` : ""}. Podés crear otras cuando quieras desde Marcas.`
-          : "",
-        cuerpo: hayModelo
-          ? `<form method="post" action="/action/marca-nueva">
-              <input type="hidden" name="back" value="/empezar?paso=3">
-              <div class="campo">
-                <label for="url">Sitio de tu marca</label>
-                <input type="url" id="url" name="url" placeholder="https://tumarca.com" required>
-              </div>
-              <div class="campo">
-                <label for="notas">Como queres que suene <span class="faint">(opcional)</span></label>
-                <input type="text" id="notas" name="notas" placeholder="tecnica y directa, publico developer">
-              </div>
-              <button class="primario" type="submit" data-esperando="leyendo el sitio...">Crear marca</button>
-              <div class="ayuda">Tarda un minuto: lee el sitio, propone la identidad y baja las tipografías.</div>
-            </form>`
-          : `<p class="mini err">Primero conectá el modelo: sin él no se puede armar una marca.</p>
-             <a class="boton" href="/empezar?paso=1">Volver al paso anterior</a>`,
+          ? `Tu marca es <strong>${esc(brand.name)}</strong>${brand.site ? ` (${esc(brand.site)})` : ""}.`
+          : `Hay ${marcas.length} marca(s) creada(s).`,
+        href: "/marcas",
+        boton: marcas.length ? "Ver mis marcas" : "Ir a Marcas",
       },
       {
         titulo: "Leé sus fuentes",
         detalle:
-          "<p>De acá salen los hechos que el contenido puede afirmar, cada uno con la página donde se verificó. " +
-          "Sin esto las piezas salen genéricas — es lo que separa un post que dice algo de uno que suena a folleto.</p>",
+          "De acá salen los hechos que el contenido puede afirmar, cada uno con la página donde se verificó. " +
+          "Sin esto las piezas salen genéricas: es lo que separa un post que dice algo de uno que suena a folleto.",
         hecho: fuentes.length > 0,
-        resumen: fuentes.length
-          ? `${fuentes.length} fuente(s) leidas, ${fuentes.reduce((a, f) => a + (f.facts?.length ?? 0), 0)} hechos citables.`
-          : "",
-        cuerpo: brand
-          ? `<form method="post" action="/action/sync">
-              <input type="hidden" name="brand" value="${esc(brand.id)}">
-              <input type="hidden" name="back" value="/empezar?paso=4">
-              <button class="primario" type="submit" data-esperando="leyendo...">Leer el sitio de ${esc(brand.name)}</button>
-              <div class="ayuda">Tarda un minuto. Podés seguir y volver después.</div>
-            </form>`
-          : `<p class="mini err">Todavía no hay marca.</p><a class="boton" href="/empezar?paso=2">Volver</a>`,
+        resumen: `${fuentes.length} fuente(s) leídas, ${hechos} hechos citables.`,
+        href: brand ? `/marcas/${encodeURIComponent(brand.id)}` : "/marcas",
+        boton: brand ? `Abrir ${brand.name}` : "Ir a Marcas",
       },
       {
-        titulo: hechas.length ? "Ya generaste tu primera pieza" : "Pedí tu primera pieza",
-        detalle: hechas.length
-          ? "<p>Listo: el sistema ya funciona de punta a punta. Cuando quieras otra, es la pestaña Crear.</p>"
-          : "<p>Decí qué querés comunicar y elegí el formato: texto, imagen, historia vertical, carrusel, video o reel. " +
-            "Sale con la identidad de tu marca y podés verla mientras se arma.</p>",
+        titulo: "Pedí tu primera pieza",
+        detalle:
+          "Decís qué querés comunicar y elegís el formato: texto, imagen, historia vertical, carrusel, video o reel. " +
+          "Sale con la identidad de tu marca y la ves armarse.",
         hecho: hechas.length > 0,
-        final: true,
+        resumen: `Ya generaste ${hechas.length} pieza(s).`,
+        href: "/crear",
+        boton: "Ir a Crear",
       },
     ];
 
-    // Sin ?paso, arranca en el primero que falte: volver al asistente te deja
-    // donde estabas, no en la bienvenida otra vez.
-    const pedido = Number(url.searchParams.get("paso"));
-    const primeroPendiente = pasos.findIndex((p) => !p.hecho);
-    const indice = Number.isFinite(pedido) && url.searchParams.has("paso")
-      ? clamp(pedido, 0, pasos.length - 1)
-      : primeroPendiente < 0
-        ? pasos.length - 1
-        : primeroPendiente;
-
-    return html(res, marco, "Empezar", vistaEmpezar({ pasos, indice, brand }), "empezar");
+    return html(res, marco, "Cómo empezar", vistaEmpezar({ pasos }), "empezar");
   }
 
   function vistaDeEquipo(res, marco, usuario, url) {
