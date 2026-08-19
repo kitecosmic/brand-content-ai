@@ -144,13 +144,13 @@ De las dos formas, el panel te lleva de la mano desde ahí:
 4. **Leés sus fuentes** — de ahí salen los hechos que el contenido puede afirmar.
 5. **Pedís tu primera pieza** — decís qué querés comunicar y elegís el formato.
 
-El **`?`** de la barra de arriba abre el mapa: los cuatro pasos, cuáles ya están
-hechos, y el botón que lleva a la sección donde se hace cada uno. No crea nada
-por su cuenta —la marca se crea en Marcas, la API key se carga en Ajustes—, así
-que nunca hay dos lugares para lo mismo. Los pasos se marcan solos mirando el
-estado real: si borrás la marca, ese paso vuelve a estar pendiente. Tiene un "no
-volver a mostrarlo" que lo saca del camino, y el `?` sigue ahí cuando lo
-necesites.
+Mientras falte alguno de esos pasos, un **tutorial** te acompaña: un cuadro chico
+en la esquina que dice qué hacer en la pantalla en la que estás y, si el paso
+vive en otra, te lleva. No pide datos ni ejecuta nada —la marca se crea en
+Marcas, la API key se carga en Ajustes—, así que nunca hay dos lugares para lo
+mismo. Los pasos se marcan solos mirando el estado real: si borrás la marca, ese
+paso vuelve a estar pendiente. Se cierra con la ✕ por esta vez, o con "no volver
+a mostrarlo" para siempre; el **`?`** de la barra lo trae de vuelta.
 
 Una instalación nueva arranca **sin ninguna marca**: no se inventa una de
 ejemplo. Lo primero que hacés es crear la tuya con la URL de tu sitio.
@@ -208,8 +208,8 @@ Seis pestañas, una idea por pestaña:
   y la clave única del modo viejo. Lo que guardás acá manda sobre el `.env` y se aplica sin reiniciar;
   los secretos se guardan en la base y nunca se vuelven a mostrar enteros.
 
-Arriba: el selector de marca activa, la navegación, el `?` con el mapa de cómo
-empezar y el tema.
+Arriba: el selector de marca activa, la navegación, el `?` que enciende el
+tutorial y el tema.
 
 **El panel se pinta con la marca que estás mirando.** Los colores salen de su
 paleta y los títulos de su tipografía real, que ya está embebida en disco. Cambiás
@@ -247,11 +247,11 @@ Si la marca fue una prueba y querés que no quede nada, hay una casilla para
 borrar también sus carpetas — y solo se tocan las que están dentro de las
 carpetas de proyectos y contenido de esta instalación.
 
-**El mapa de "cómo empezar" vive en el `?` de la barra**, no en una pestaña. Dice
-qué falta y lleva a la sección donde se hace. No tiene formularios propios: cuando
-los tenía, la misma cosa se podía hacer en dos lugares distintos y, desde afuera,
-parecía que el asistente creaba la marca cuando en realidad la estaba mostrando.
-Con "no volver a mostrarlo" deja de aparecer al entrar y queda a un click del `?`.
+**El tutorial es un cuadro sobre la pantalla real**, no una pantalla aparte. Te
+para frente al formulario de verdad y te dice qué hacer ahí; "Siguiente" te lleva
+a la pantalla del paso que sigue. No tiene formularios propios: cuando los tenía,
+la misma cosa se podía hacer en dos lugares distintos y, desde afuera, parecía
+que el asistente creaba la marca cuando en realidad la estaba mostrando.
 
 Si una pieza falla en una fase que mejora sola al reintentar (layout flojo, el
 linter en contra, una escena que el modelo no entrego), el sistema la reintenta solo

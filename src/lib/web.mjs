@@ -47,7 +47,6 @@ import {
   avisoSinModelo,
   faseTexto,
   vistaAjustes,
-  vistaEmpezar,
   vistaEquipo,
   vistaInvitacion,
   vistaSetup,
@@ -274,6 +273,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       usuario,
       base: baseUrl(req),
       faltaEmpezar: faltaOnboarding(),
+      tour: tourDe(ruta, marcaActiva, url),
     };
 
     if (ruta === "/" || ruta === "/crear") return vistaDeCrear(res, marco, marcaActiva);
@@ -286,7 +286,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     if (ruta === "/nuevo") return vistaDeNueva(res, marco, marcaActiva);
     if (ruta === "/confirmar/generar") return vistaDeConfirmarGenerar(res, marco, marcaActiva);
     if (ruta === "/confirmar/plan") return vistaDeConfirmarPlan(res, marco, marcaActiva, url);
-    if (ruta === "/empezar") return vistaDeEmpezar(res, marco, marcaActiva);
+    // Queda por los links viejos: el tutorial ya no es una pantalla aparte.
+    if (ruta === "/empezar") {
+      const t = tourDe("", marcaActiva, url);
+      res.writeHead(303, { location: t?.ir ?? "/crear" });
+      return res.end();
+    }
     if (ruta === "/equipo") return vistaDeEquipo(res, marco, usuario, url);
     if (ruta === "/ajustes") {
       if (usuario.role !== "owner") {
@@ -557,71 +562,90 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   }
 
   /**
-   * La guia de como empezar.
+   * Los pasos del tutorial: que falta, donde se hace y que hay que hacer ahi.
    *
-   * No hace nada: cuenta que falta y lleva a donde se hace. Antes traia los
-   * formularios adentro —la API key, la URL de la marca— y eso confundia mas de
-   * lo que ayudaba: la misma cosa se hacia en dos lugares distintos y, desde
-   * afuera, no quedaba claro si el asistente estaba creando la marca o
-   * mostrandola. Ahora cada cosa se hace en su seccion y esto es el mapa.
-   *
-   * Los pasos se calculan del estado real, asi que sirve igual la primera vez
-   * que un mes despues: lo que ya esta hecho se ve hecho.
+   * El estado sale del sistema real —hay key, hay marca, hay hechos, hay pieza—
+   * asi que borrar una marca de prueba vuelve a marcar ese paso como pendiente.
    */
-  function vistaDeEmpezar(res, marco, brand) {
+  function pasosDelTour(brand) {
     const ahora = loadConfig();
     const marcas = store.listBrands();
     const fuentes = brand ? store.allKnowledge(brand.id).filter((f) => f.digest) : [];
     const hechas = store.listItems({ limit: 500 }).filter((i) => i.asset_path);
-    const hechos = fuentes.reduce((a, f) => a + (f.facts?.length ?? 0), 0);
 
-    const pasos = [
+    return [
       {
         titulo: "Conectá el modelo",
-        detalle:
-          "Brand Content AI escribe y compone con MiniMax. Su API key sale de " +
-          '<a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> ' +
-          "&rarr; API Keys. Es lo único imprescindible: sin el modelo no se puede armar ni una marca.",
+        texto:
+          "Pegá tu API key de MiniMax en el primer campo y guardá. Es lo único imprescindible: sin el modelo no se puede armar una marca.",
+        ruta: "/ajustes",
+        ir: "Ir a Ajustes",
         hecho: modeloConfigurado(ahora),
-        resumen: "El modelo está conectado.",
-        href: "/ajustes",
-        boton: "Ir a Ajustes",
       },
       {
         titulo: "Creá tu marca",
-        detalle:
-          "Con la URL de tu sitio saca los colores, la tipografía, el tono y de qué habla el producto. " +
-          "Después la ajustás hablando: <em>más oscuro, el acento en violeta</em>.",
+        texto:
+          "Pegá la URL de tu sitio en «Nueva marca». Tarda un minuto: lee el sitio, propone la identidad y baja las tipografías.",
+        ruta: "/marcas",
+        ir: "Ir a Marcas",
         hecho: marcas.length > 0,
-        resumen: brand
-          ? `Tu marca es <strong>${esc(brand.name)}</strong>${brand.site ? ` (${esc(brand.site)})` : ""}.`
-          : `Hay ${marcas.length} marca(s) creada(s).`,
-        href: "/marcas",
-        boton: marcas.length ? "Ver mis marcas" : "Ir a Marcas",
       },
       {
         titulo: "Leé sus fuentes",
-        detalle:
-          "De acá salen los hechos que el contenido puede afirmar, cada uno con la página donde se verificó. " +
-          "Sin esto las piezas salen genéricas: es lo que separa un post que dice algo de uno que suena a folleto.",
+        texto:
+          "Tocá «Sincronizar» para que lea el sitio y saque los hechos que el contenido puede afirmar. Sin esto las piezas salen genéricas.",
+        ruta: brand ? `/marcas/${encodeURIComponent(brand.id)}` : "/marcas",
+        ir: brand ? `Abrir ${brand.name}` : "Ir a Marcas",
         hecho: fuentes.length > 0,
-        resumen: `${fuentes.length} fuente(s) leídas, ${hechos} hechos citables.`,
-        href: brand ? `/marcas/${encodeURIComponent(brand.id)}` : "/marcas",
-        boton: brand ? `Abrir ${brand.name}` : "Ir a Marcas",
       },
       {
         titulo: "Pedí tu primera pieza",
-        detalle:
-          "Decís qué querés comunicar y elegís el formato: texto, imagen, historia vertical, carrusel, video o reel. " +
-          "Sale con la identidad de tu marca y la ves armarse.",
+        texto:
+          "Escribí qué querés comunicar, elegí el formato y generá. Vas a ver la fase en vivo mientras se arma.",
+        ruta: "/crear",
+        ir: "Ir a Crear",
         hecho: hechas.length > 0,
-        resumen: `Ya generaste ${hechas.length} pieza(s).`,
-        href: "/crear",
-        boton: "Ir a Crear",
       },
     ];
+  }
 
-    return html(res, marco, "Cómo empezar", vistaEmpezar({ pasos }), "empezar");
+  /**
+   * El tutorial que acompana: un cuadro chico sobre la pantalla real.
+   *
+   * No tiene formularios ni ejecuta nada, y esa es toda la idea: te para frente
+   * al formulario de verdad y te dice que hacer ahi. Antes era una pantalla
+   * aparte con sus propios campos, y eso hacia que la misma cosa se pudiera
+   * hacer en dos lugares y que no se entendiera si el asistente estaba creando
+   * la marca o mostrandola.
+   *
+   * El paso sale de ?tour=N cuando viene —asi "Siguiente" puede adelantar uno
+   * que todavia no hiciste— y si no, del primero que falte, que es lo que
+   * corresponde al entrar.
+   */
+  function tourDe(ruta, brand, url) {
+    if (!faltaOnboarding()) return null;
+    const pasos = pasosDelTour(brand);
+    const pedido = Number(url.searchParams.get("tour"));
+    const pendiente = pasos.findIndex((p) => !p.hecho);
+    const i =
+      Number.isInteger(pedido) && pedido >= 1 && pedido <= pasos.length
+        ? pedido - 1
+        : Math.max(0, pendiente);
+    const paso = pasos[i];
+    const sig = pasos[i + 1];
+
+    return {
+      n: i + 1,
+      total: pasos.length,
+      titulo: paso.titulo,
+      texto: paso.texto,
+      hecho: paso.hecho,
+      // Si ya estas parado en la pantalla del paso no hay adonde ir: hay que
+      // hacerlo, y el boton sobra.
+      ir: ruta === paso.ruta ? null : `${paso.ruta}?tour=${i + 1}`,
+      irTexto: paso.ir,
+      siguiente: sig ? `${sig.ruta}?tour=${i + 2}` : null,
+    };
   }
 
   function vistaDeEquipo(res, marco, usuario, url) {
@@ -936,11 +960,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
 
       case "tour-listo": {
         store.set(TOUR_VISTO, "1");
-        return volver("/crear", { msg: "Listo. El asistente sigue en /empezar cuando lo necesites." });
+        return volver("/crear", { msg: "Listo. El tutorial vuelve desde el ? de la barra." });
       }
 
       case "tour-reiniciar": {
         store.del(TOUR_VISTO);
+        // /empezar redirige al paso que falte, con el tutorial ya encendido.
         return volver("/empezar", { msg: "" });
       }
 

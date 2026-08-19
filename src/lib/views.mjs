@@ -868,54 +868,6 @@ ${
 </form>`;
 }
 
-/**
- * Como empezar: el mapa de los pasos, con el link a donde se hace cada uno.
- *
- * No tiene un solo formulario, y es a proposito. Antes traia adentro el de la
- * API key y el de la marca, y eso hacia dos cosas malas: la misma cosa se podia
- * hacer en dos lugares distintos, y desde afuera parecia que el asistente
- * estaba creando la marca cuando en realidad la estaba mostrando. Un cartel que
- * dice "esto se hace alla" no se puede confundir con la cosa misma.
- *
- * El estado sale del sistema real, asi que sirve igual la primera vez que un
- * mes despues: lo hecho se ve hecho, y lo que falta tiene su boton.
- */
-export function vistaEmpezar({ pasos }) {
-  const faltan = pasos.filter((p) => !p.hecho).length;
-
-  const filas = pasos
-    .map(
-      (p, i) => `
-    <li class="paso${p.hecho ? " hecho" : ""}">
-      <span class="paso-n" aria-hidden="true">${p.hecho ? "&#10003;" : i + 1}</span>
-      <div class="paso-texto">
-        <h2>${esc(p.titulo)}</h2>
-        <p class="sub">${p.detalle}</p>
-        ${p.hecho && p.resumen ? `<p class="mini faint">${p.resumen}</p>` : ""}
-      </div>
-      <a class="boton${p.hecho ? " chico" : " primario"}" href="${esc(p.href)}">${esc(p.boton)}</a>
-    </li>`,
-    )
-    .join("");
-
-  return `<div style="max-width:720px;margin:3vh auto 0">
-  <h1>Cómo empezar</h1>
-  <p class="sub">${
-    faltan
-      ? `${pasos.length} pasos hasta tu primera pieza${faltan < pasos.length ? `; te ${faltan === 1 ? "queda" : "quedan"} ${faltan}` : ""}. Cada uno se hace en su sección — acá está el mapa.`
-      : "Está todo listo. El mapa queda acá por si sumás otra marca o querés volver sobre algún paso."
-  }</p>
-
-  <ol class="pasos">${filas}</ol>
-
-  <div class="entre" style="margin-top:18px">
-    <a class="mini faint" href="/crear">Ir al panel</a>
-    <form method="post" action="/action/tour-listo">
-      <button class="chico" type="submit" title="Deja de aparecer al entrar. Siempre vuelve desde el signo de pregunta de la barra de arriba.">No volver a mostrarlo</button>
-    </form>
-  </div>
-</div>`;
-}
 
 /**
  * La entrada.

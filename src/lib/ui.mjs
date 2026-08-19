@@ -232,6 +232,7 @@ export function pagina({
   err = "",
   usuario = null,
   faltaEmpezar = false,
+  tour = null,
 } = {}) {
   const activa = marcas.find((m) => m.id === marcaActiva) ?? null;
   const t = tokens(activa?.palette, tema);
@@ -257,9 +258,36 @@ ${msg ? `<div class="aviso bien" role="status">${esc(msg)}</div>` : ""}
 ${err ? `<div class="aviso mal" role="alert">${esc(err)}</div>` : ""}
 ${cuerpo}
 </main>
+${autenticado && tour ? cuadroTour(tour) : ""}
 <script>${JS}</script>
 </body>
 </html>`;
+}
+
+/**
+ * El tutorial: un cuadro chico en la esquina, sobre la pantalla real.
+ *
+ * No pide datos ni ejecuta nada — dice que hacer en la pantalla en la que estas
+ * y, si el paso vive en otra, te lleva. Esa es la diferencia con el asistente
+ * que tenia antes: aquel te mostraba una copia del formulario y no se entendia
+ * si guardaba de verdad.
+ */
+function cuadroTour(t) {
+  return `<aside class="tour" data-tour role="complementary" aria-label="Tutorial">
+  <div class="tour-cab">
+    <span class="tour-paso">Paso ${t.n} de ${t.total}</span>
+    <button type="button" class="tour-x" data-tour-cerrar data-libre="1" title="Cerrarlo por ahora" aria-label="Cerrar el tutorial">&times;</button>
+  </div>
+  <h3>${esc(t.titulo)}${t.hecho ? ' <span class="chip ok">hecho</span>' : ""}</h3>
+  <p>${esc(t.texto)}</p>
+  <div class="tour-pie">
+    ${t.ir ? `<a class="boton primario chico" href="${esc(t.ir)}">${esc(t.irTexto)}</a>` : ""}
+    ${t.siguiente ? `<a class="boton chico" href="${esc(t.siguiente)}">Siguiente &rarr;</a>` : ""}
+    <form method="post" action="/action/tour-listo" style="margin:0">
+      <button type="submit" class="tour-no">no volver a mostrarlo</button>
+    </form>
+  </div>
+</aside>`;
 }
 
 /**
@@ -331,7 +359,9 @@ function barra({ activa, marcas, marcaActiva, tab, usuario, faltaEmpezar }) {
     </nav>
 
     <div class="cabecera-fin">
-      <a class="ayuda-boton${tab === "empezar" ? " activo" : ""}${faltaEmpezar ? " pendiente" : ""}" href="/empezar" title="Cómo empezar: los pasos y dónde se hace cada uno" aria-label="Cómo empezar">?</a>
+      <form method="post" action="/action/tour-reiniciar" style="margin:0">
+        <button type="submit" class="ayuda-boton${faltaEmpezar ? " pendiente" : ""}" title="Ver el tutorial: los pasos hasta tu primera pieza" aria-label="Ver el tutorial">?</button>
+      </form>
       <button type="button" class="tema" data-tema-toggle data-libre="1" title="Cambiar entre el tema de la marca, claro y oscuro">
         <span data-tema-nombre></span>
       </button>
@@ -543,29 +573,27 @@ code{font-family:var(--fuente-mono);font-size:.9em;background:var(--hover);paddi
   background:var(--surface);border:1px solid var(--line);border-radius:11px;
   padding:18px;margin-bottom:14px;box-shadow:var(--sombra);
 }
-/* Los pasos de "como empezar": el numero, que es, y el boton que lleva a la
-   seccion donde se hace. Lo hecho se apaga en vez de desaparecer — saber lo que
-   ya pasaste es parte de entender donde estas. */
-.pasos{list-style:none;display:grid;gap:10px;margin:18px 0 0;padding:0}
-.paso{
-  display:grid;grid-template-columns:26px 1fr auto;gap:14px;align-items:start;
-  background:var(--surface);border:1px solid var(--line);border-radius:11px;
-  padding:16px 18px;box-shadow:var(--sombra);
+/* El tutorial: flota abajo a la derecha, sobre lo que estes mirando. Angosto a
+   proposito — tiene que caber al lado del formulario del que habla, no taparlo. */
+.tour{
+  position:fixed;right:18px;bottom:18px;z-index:40;width:300px;
+  max-width:calc(100vw - 36px);
+  background:var(--surface);border:1px solid var(--line-fuerte);border-radius:12px;
+  padding:14px 16px;box-shadow:var(--sombra-alta);
 }
-.paso-n{
-  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
-  background:var(--accent);color:var(--on-accent);font-size:12.5px;font-weight:700;
+.tour-cab{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.tour-paso{font-size:11px;color:var(--hint);letter-spacing:.06em;text-transform:uppercase}
+.tour-x{background:none;border:0;color:var(--hint);font-size:19px;line-height:1;cursor:pointer;padding:0 2px}
+.tour-x:hover{color:var(--ink)}
+.tour h3{margin:0 0 6px;font-size:15px;text-transform:none;letter-spacing:normal}
+.tour p{margin:0 0 12px;font-size:13px;color:var(--muted);line-height:1.5}
+.tour-pie{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tour-no{
+  background:none;border:0;padding:0;color:var(--hint);font-size:12px;
+  font-family:inherit;cursor:pointer;text-decoration:underline;
 }
-.paso.hecho{opacity:.7}
-.paso.hecho .paso-n{background:var(--ok);color:var(--bg)}
-.paso-texto h2{font-size:15.5px;margin:0 0 4px}
-.paso-texto p{margin:0}
-.paso-texto p + p{margin-top:6px}
-.paso > .boton{align-self:center;white-space:nowrap}
-@media (max-width:640px){
-  .paso{grid-template-columns:26px 1fr}
-  .paso > .boton{grid-column:2;justify-self:start;margin-top:10px}
-}
+.tour-no:hover{color:var(--ink)}
+@media (max-width:520px){.tour{left:18px;right:18px;width:auto}}
 .card > :last-child{margin-bottom:0}
 details.card > summary{cursor:pointer;list-style:none;user-select:none}
 details.card > summary::-webkit-details-marker{display:none}
@@ -784,6 +812,15 @@ const JS = `
     var siguiente = TEMAS[(TEMAS.indexOf(temaActual()) + 1) % TEMAS.length];
     document.cookie = "bca_tema=" + siguiente + ";path=/;max-age=" + (60*60*24*365) + ";samesite=lax";
     location.reload();
+  });
+
+  // --- el tutorial se cierra por ahora ------------------------------------
+  // Sin ir al servidor: cerrarlo es "no me molestes en esta pantalla", no una
+  // decision. La que se guarda es "no volver a mostrarlo", que es un POST.
+  var cerrarTour = document.querySelector("[data-tour-cerrar]");
+  if (cerrarTour) cerrarTour.addEventListener("click", function(){
+    var caja = document.querySelector("[data-tour]");
+    if (caja) caja.remove();
   });
 
   // --- el selector de marca se envia solo --------------------------------

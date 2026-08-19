@@ -150,49 +150,49 @@ test("sin sesion no se ve nada; con la contrasena correcta si", async () => {
   assert.equal((await get("/crear", cookie)).status, 200);
 });
 
-test("como empezar es un mapa: dice que falta y lleva a donde se hace", async () => {
+test("el tutorial acompana: dice el paso, lleva a la pantalla y no pide nada", async () => {
   const cookie = galleta(
     await post("/login", { email: "joel@marca.com", password: "una frase larga y facil" }),
   );
-  const html = await (await get("/empezar", cookie)).text();
 
-  // Cada paso nombra su seccion y linkea a ella.
-  assert.match(html, /Conectá el modelo/);
-  assert.match(html, /href="\/ajustes"/);
-  assert.match(html, /Creá tu marca/);
-  assert.match(html, /href="\/marcas"/);
-  assert.match(html, /Pedí tu primera pieza/);
-  assert.match(html, /href="\/crear"/);
+  // Parado en Crear, el paso que falta es el primero, y vive en Ajustes.
+  const crear = await (await get("/crear", cookie)).text();
+  assert.match(crear, /Paso 1 de 4/);
+  assert.match(crear, /Conectá el modelo/);
+  assert.match(crear, /href="\/ajustes\?tour=1"/, "el tutorial lleva a la pantalla del paso");
+  assert.doesNotMatch(crear, /name="minimax_api_key"/, "no pide la key: eso es de Ajustes");
 
-  // Lo que confundia: aca NO se crea nada. La marca se crea en Marcas y la
-  // API key se carga en Ajustes; el mapa solo dice donde.
-  assert.doesNotMatch(html, /action="\/action\/marca-nueva"/, "la marca no se crea desde el mapa");
-  assert.doesNotMatch(html, /name="minimax_api_key"/, "la API key no se carga desde el mapa");
-  assert.doesNotMatch(html, /action="\/action\/sync"/, "las fuentes no se leen desde el mapa");
+  // Ya parado en Ajustes no hay adonde ir — hay que hacerlo ahi — pero si se
+  // puede adelantar al paso siguiente.
+  const ajustes = await (await get("/ajustes", cookie)).text();
+  assert.match(ajustes, /Paso 1 de 4/);
+  assert.doesNotMatch(ajustes, /href="\/ajustes\?tour=1"/, "no se ofrece ir donde ya estas");
+  assert.match(ajustes, /href="\/marcas\?tour=2"/, "y deja seguir al que sigue");
 
-  // El estado sale del sistema real, no de un contador de pasos.
-  await post("/action/ajustes", { minimax_api_key: "una-key-cualquiera", back: "/empezar" }, cookie);
-  assert.match(
-    await (await get("/empezar", cookie)).text(),
-    /El modelo está conectado/,
-    "el paso hecho se ve hecho",
-  );
+  // El paso sale del estado real: al guardar la key, el tutorial avanza solo.
+  await post("/action/ajustes", { minimax_api_key: "una-key-cualquiera", back: "/crear" }, cookie);
+  assert.match(await (await get("/crear", cookie)).text(), /Paso 2 de 4/);
 });
 
-test("el signo de pregunta de la barra lleva al mapa desde cualquier pantalla", async () => {
+test("el tutorial se apaga, y el signo de pregunta lo trae de vuelta", async () => {
   const cookie = galleta(
     await post("/login", { email: "joel@marca.com", password: "una frase larga y facil" }),
   );
+
+  await post("/action/tour-listo", {}, cookie);
+  const sinTour = await (await get("/crear", cookie)).text();
+  assert.doesNotMatch(sinTour, /<aside class="tour"/, "apagado, no aparece");
+  assert.match(sinTour, /action="\/action\/tour-reiniciar"/, "pero el ? sigue en la barra");
+
+  await post("/action/tour-reiniciar", {}, cookie);
   for (const ruta of ["/crear", "/calendario", "/marcas"]) {
-    const html = await (await get(ruta, cookie)).text();
-    assert.match(html, /class="ayuda-boton[^"]*" href="\/empezar"/, `falta la ayuda en ${ruta}`);
+    assert.match(await (await get(ruta, cookie)).text(), /<aside class="tour"/, `falta el tutorial en ${ruta}`);
   }
-  // Y no ocupa una pestana: el mapa no es una seccion mas del panel.
-  assert.doesNotMatch(
-    await (await get("/crear", cookie)).text(),
-    /class="tab[^"]*" href="\/empezar"/,
-    "el mapa vive en el signo de pregunta, no en la navegacion",
-  );
+
+  // El link viejo no queda muerto: manda al paso que falte.
+  const viejo = await get("/empezar", cookie);
+  assert.equal(viejo.status, 303);
+  assert.match(viejo.headers.get("location") ?? "", /\?tour=\d/);
 });
 
 test("invitar: link de un solo uso, y el invitado entra como miembro", async () => {
