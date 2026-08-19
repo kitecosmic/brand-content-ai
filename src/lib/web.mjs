@@ -21,7 +21,7 @@ import { createServer } from "node:http";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { addDays, env, loadConfig, slugify, today } from "./config.mjs";
 import { CAMPOS, GRUPOS, estadoAjustes, guardarAjuste, telegramConfigurado, modeloConfigurado } from "./settings.mjs";
@@ -231,7 +231,9 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     const usuario = yo ?? { id: "clave", email: "", name: "panel", role: "owner" };
 
     if (req.method === "GET" && ruta.startsWith("/asset/")) {
-      return servirAsset(res, ruta.slice("/asset/".length));
+      return servirAsset(res, ruta.slice("/asset/".length), {
+        descargar: url.searchParams.get("descargar") === "1",
+      });
     }
     if (req.method === "GET" && ruta.startsWith("/preview/")) {
       return servirPreview(res, ruta.slice("/preview/".length));
@@ -1277,30 +1279,73 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     return `<div class="card">${bloqueArchivo(asset, `/asset/${encodeURIComponent(item.id)}`, item.angle)}</div>`;
   }
 
-  /** Como se muestra un entregable, sea el actual o el de una revision anterior. */
+  /**
+   * Como se muestra un entregable, sea el actual o el de una revision anterior.
+   *
+   * Los tres tipos —imagen, video, texto— se ven, se amplian y se descargan. El
+   * video traia todo eso gratis del navegador y por eso durante un tiempo fue el
+   * unico que se podia mirar en grande o guardar; el resto quedaba encerrado en
+   * una miniatura.
+   */
   function bloqueArchivo(asset, href, alt) {
     if (statSync(asset).isDirectory()) {
       const slides = readdirSync(asset)
         .filter((f) => IMAGE_EXT.has(extname(f).toLowerCase()))
         .sort();
-      return `<h3>${slides.length} slides</h3><div class="slides">${slides
-        .map(
-          (f) =>
-            `<div class="preview"><img loading="lazy" src="${href}/${encodeURIComponent(f)}" alt="${esc(f)}"></div>`,
-        )
-        .join("")}</div>`;
+      return `<div class="entre" style="margin-bottom:10px">
+          <h3 style="margin:0">${slides.length} slides</h3>
+          <span class="mini faint">tocá una para verla grande</span>
+        </div>
+        <div class="slides" data-galeria>${slides
+          .map((f, i) => {
+            const src = `${href}/${encodeURIComponent(f)}`;
+            return `<figure class="preview">
+              <img loading="lazy" src="${src}" alt="${esc(`${alt} — slide ${i + 1}`)}"
+                   data-ampliar data-nombre="${esc(`Slide ${i + 1} de ${slides.length}`)}"
+                   data-descargar="${src}?descargar=1">
+              <figcaption class="preview-pie">
+                <span class="mini faint">${i + 1}</span>
+                <a class="boton chico" href="${src}?descargar=1">Descargar</a>
+              </figcaption>
+            </figure>`;
+          })
+          .join("")}</div>`;
     }
+
     const ext = extname(asset).toLowerCase();
+    const nombre = esc(alt);
+
     if (ext === ".mp4") {
-      return `<div class="preview"><video controls preload="metadata" src="${href}"></video></div>`;
+      return `<figure class="preview">
+        <video controls preload="metadata" src="${href}" data-medio></video>
+        <figcaption class="preview-pie">
+          <button type="button" class="chico" data-pantalla-completa data-libre="1">Pantalla completa</button>
+          <a class="boton chico" href="${href}?descargar=1">Descargar</a>
+        </figcaption>
+      </figure>`;
     }
+
     if (IMAGE_EXT.has(ext)) {
-      return `<div class="preview"><img src="${href}" alt="${esc(alt)}"></div>`;
+      return `<figure class="preview">
+        <img src="${href}" alt="${nombre}" data-ampliar data-nombre="${nombre}" data-descargar="${href}?descargar=1">
+        <figcaption class="preview-pie">
+          <button type="button" class="chico" data-ampliar-de data-libre="1">Ver en grande</button>
+          <a class="boton chico" href="${href}?descargar=1">Descargar</a>
+        </figcaption>
+      </figure>`;
     }
-    return `<pre class="bloque">${esc(leerTexto(asset))}</pre>`;
+
+    return `<figure class="preview texto">
+      <pre class="bloque" data-ampliar data-nombre="${nombre}" data-descargar="${href}?descargar=1">${esc(leerTexto(asset))}</pre>
+      <figcaption class="preview-pie">
+        <button type="button" class="chico" data-ampliar-de data-libre="1">Ver en grande</button>
+        <button type="button" class="chico" data-copiar data-libre="1">Copiar</button>
+        <a class="boton chico" href="${href}?descargar=1">Descargar</a>
+      </figcaption>
+    </figure>`;
   }
 
-  function servirAsset(res, resto) {
+  function servirAsset(res, resto, { descargar = false } = {}) {
     const [rawId, ...cola] = resto.split("/");
     const item = store.getItem(decodeURIComponent(rawId));
     if (!item) return enviar(res, 404, "text/plain", "no encontrado");
@@ -1326,7 +1371,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     if (!existsSync(destino) || statSync(destino).isDirectory()) {
       return enviar(res, 404, "text/plain", "no encontrado");
     }
-    servirArchivo(res, destino);
+    // El nombre del archivo que ve quien lo guarda: el angulo de la pieza, no
+    // un id. Para un slide se le suma el nombre del archivo, que ya trae su
+    // numero de orden.
+    const nombreBase = slugify(item.angle || item.id) || item.id;
+    const sugerido = cola.length ? `${nombreBase}-${basename(destino)}` : `${nombreBase}${extname(destino)}`;
+    servirArchivo(res, destino, descargar ? sugerido : null);
   }
 
   function servirPreview(res, rawId) {
@@ -1358,12 +1408,18 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     createReadStream(css).pipe(res);
   }
 
-  function servirArchivo(res, destino) {
-    res.writeHead(200, {
+  function servirArchivo(res, destino, nombreDescarga = null) {
+    const cabeceras = {
       "content-type": MIME[extname(destino).toLowerCase()] ?? "application/octet-stream",
       "content-length": statSync(destino).size,
       "cache-control": "no-store",
-    });
+    };
+    // Con esto el navegador guarda en vez de mostrar. El nombre va entre
+    // comillas y sin las suyas propias, que romperian la cabecera.
+    if (nombreDescarga) {
+      cabeceras["content-disposition"] = `attachment; filename="${nombreDescarga.replaceAll('"', "")}"`;
+    }
+    res.writeHead(200, cabeceras);
     createReadStream(destino).pipe(res);
   }
 

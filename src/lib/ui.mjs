@@ -259,10 +259,36 @@ ${err ? `<div class="aviso mal" role="alert">${esc(err)}</div>` : ""}
 ${cuerpo}
 </main>
 ${autenticado && tour ? cuadroTour(tour) : ""}
+${autenticado ? VISOR : ""}
 <script>${JS}</script>
 </body>
 </html>`;
 }
+
+/**
+ * El visor: cualquier entregable a pantalla completa.
+ *
+ * Es uno solo para toda la pagina y se llena clonando el elemento en el que
+ * hiciste click, asi que sirve igual para una imagen, un video o un texto sin
+ * saber nada de ninguno. Las flechas aparecen cuando el elemento vive en una
+ * galeria — los slides de un carrusel — y no cuando esta solo.
+ */
+const VISOR = `<dialog class="visor" data-visor aria-label="Ver en grande">
+  <div class="visor-cab">
+    <span class="visor-nombre" data-visor-nombre></span>
+    <div class="fila">
+      <button type="button" class="chico" data-visor-pantalla data-libre="1">Pantalla completa</button>
+      <a class="boton chico" data-visor-descargar href="#">Descargar</a>
+      <button type="button" class="visor-x" data-visor-cerrar data-libre="1" aria-label="Cerrar">&times;</button>
+    </div>
+  </div>
+  <div class="visor-cuerpo" data-visor-cuerpo></div>
+  <div class="visor-pie">
+    <button type="button" class="chico" data-visor-anterior data-libre="1" aria-label="Anterior">&larr;</button>
+    <span class="mini faint" data-visor-contador></span>
+    <button type="button" class="chico" data-visor-siguiente data-libre="1" aria-label="Siguiente">&rarr;</button>
+  </div>
+</dialog>`;
 
 /**
  * El tutorial: un cuadro chico en la esquina, sobre la pantalla real.
@@ -777,7 +803,47 @@ th:last-child,td:last-child{padding-right:0}
   overflow:hidden;display:grid;place-items:center;
 }
 .preview img,.preview video{display:block;max-width:100%;height:auto}
+.preview.texto{display:block;padding:0}
+.preview.texto .bloque{border:0;border-radius:9px 9px 0 0;margin:0}
+/* Lo que se puede ampliar lo dice el cursor antes que cualquier cartel. */
+.preview [data-ampliar]{cursor:zoom-in}
+.preview-pie{
+  display:flex;align-items:center;gap:8px;justify-content:flex-end;
+  width:100%;padding:8px 10px;border-top:1px solid var(--line);background:var(--surface);
+}
+.preview-pie .mini{margin-right:auto}
 .slides{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.slides .preview{align-content:start}
+
+/* --- visor ------------------------------------------------------------- */
+/* Uno solo para toda la pagina. Ocupa casi todo el viewport porque para eso se
+   abre: mirar de cerca lo que en la tarjeta es una miniatura. */
+.visor{
+  width:min(1100px,94vw);height:min(88vh,900px);max-width:none;max-height:none;
+  padding:0;border:1px solid var(--line-fuerte);border-radius:12px;
+  background:var(--surface);color:var(--ink);
+  grid-template-rows:auto 1fr auto;
+}
+.visor[open]{display:grid}
+.visor::backdrop{background:rgba(0,0,0,.62)}
+.visor:fullscreen{width:100vw;height:100vh;border-radius:0;border:0}
+.visor-cab{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 12px;border-bottom:1px solid var(--line);
+}
+.visor-nombre{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.visor-x{background:none;border:0;color:var(--muted);font-size:22px;line-height:1;padding:0 4px;cursor:pointer}
+.visor-x:hover{background:none;color:var(--ink)}
+.visor-cuerpo{
+  display:grid;place-items:center;overflow:auto;padding:14px;background:var(--bg);
+}
+.visor-cuerpo img,.visor-cuerpo video{max-width:100%;max-height:100%;object-fit:contain}
+.visor-cuerpo .bloque{max-height:none;width:100%;font-size:13.5px;background:var(--surface)}
+.visor-pie{
+  display:flex;align-items:center;justify-content:center;gap:14px;
+  padding:8px;border-top:1px solid var(--line);
+}
+.visor-pie.solo{display:none}
 
 @media (max-width:640px){
   .lienzo{padding:22px 16px 72px}
@@ -818,6 +884,115 @@ const JS = `
     var siguiente = TEMAS[(TEMAS.indexOf(temaActual()) + 1) % TEMAS.length];
     document.cookie = "bca_tema=" + siguiente + ";path=/;max-age=" + (60*60*24*365) + ";samesite=lax";
     location.reload();
+  });
+
+  // --- ver un entregable en grande ----------------------------------------
+  // El visor se llena clonando el elemento: no necesita saber si es una imagen,
+  // un video o un texto. Las flechas recorren la galeria a la que pertenece —los
+  // slides de un carrusel— y desaparecen cuando esta solo.
+  var visor = document.querySelector("[data-visor]");
+  if (visor) {
+    var cuerpoVisor = visor.querySelector("[data-visor-cuerpo]");
+    var nombreVisor = visor.querySelector("[data-visor-nombre]");
+    var bajarVisor = visor.querySelector("[data-visor-descargar]");
+    var contadorVisor = visor.querySelector("[data-visor-contador]");
+    var pieVisor = visor.querySelector(".visor-pie");
+    var grupo = [];
+    var indice = 0;
+
+    function pintarVisor() {
+      var el = grupo[indice];
+      if (!el) return;
+      var copia = el.cloneNode(true);
+      copia.removeAttribute("data-ampliar");
+      copia.removeAttribute("loading");
+      if (copia.tagName === "VIDEO") copia.setAttribute("controls", "");
+      cuerpoVisor.replaceChildren(copia);
+      nombreVisor.textContent = el.getAttribute("data-nombre") || "";
+      bajarVisor.href = el.getAttribute("data-descargar") || "#";
+      contadorVisor.textContent = grupo.length > 1 ? (indice + 1) + " / " + grupo.length : "";
+      pieVisor.classList.toggle("solo", grupo.length < 2);
+    }
+
+    function abrirVisor(el) {
+      var galeria = el.closest("[data-galeria]");
+      grupo = galeria ? Array.prototype.slice.call(galeria.querySelectorAll("[data-ampliar]")) : [el];
+      indice = Math.max(0, grupo.indexOf(el));
+      pintarVisor();
+      visor.showModal();
+    }
+
+    function mover(paso) {
+      if (grupo.length < 2) return;
+      indice = (indice + paso + grupo.length) % grupo.length;
+      pintarVisor();
+    }
+
+    document.addEventListener("click", function(ev){
+      var directo = ev.target.closest("[data-ampliar]");
+      if (directo) return abrirVisor(directo);
+      // El boton "ver en grande" del pie: amplia el medio de SU tarjeta.
+      var boton = ev.target.closest("[data-ampliar-de]");
+      if (boton) {
+        var duenio = boton.closest(".preview");
+        var medio = duenio && duenio.querySelector("[data-ampliar]");
+        if (medio) abrirVisor(medio);
+      }
+    });
+
+    visor.addEventListener("click", function(ev){
+      if (ev.target.closest("[data-visor-cerrar]")) return visor.close();
+      if (ev.target.closest("[data-visor-anterior]")) return mover(-1);
+      if (ev.target.closest("[data-visor-siguiente]")) return mover(1);
+      if (ev.target.closest("[data-visor-pantalla]")) {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (visor.requestFullscreen) visor.requestFullscreen();
+      }
+    });
+
+    // Cerrar clickeando el fondo: el dialog ocupa solo su caja, asi que un
+    // click cuyo punto cae fuera de esa caja es un click en el backdrop.
+    visor.addEventListener("mousedown", function(ev){
+      if (ev.target !== visor) return;
+      var caja = visor.getBoundingClientRect();
+      var afuera =
+        ev.clientX < caja.left || ev.clientX > caja.right ||
+        ev.clientY < caja.top || ev.clientY > caja.bottom;
+      if (afuera) visor.close();
+    });
+
+    document.addEventListener("keydown", function(ev){
+      if (!visor.open) return;
+      if (ev.key === "ArrowLeft") mover(-1);
+      if (ev.key === "ArrowRight") mover(1);
+    });
+
+    // Al cerrar, soltar el medio: un video clonado que sigue sonando detras del
+    // dialog cerrado es de las cosas mas molestas que puede hacer una pagina.
+    visor.addEventListener("close", function(){ cuerpoVisor.replaceChildren(); });
+  }
+
+  // --- pantalla completa del video, sin pasar por el visor -----------------
+  document.addEventListener("click", function(ev){
+    var boton = ev.target.closest("[data-pantalla-completa]");
+    if (!boton) return;
+    var duenio = boton.closest(".preview");
+    var medio = duenio && duenio.querySelector("[data-medio]");
+    if (medio && medio.requestFullscreen) medio.requestFullscreen();
+  });
+
+  // --- copiar el texto de una pieza ---------------------------------------
+  document.addEventListener("click", function(ev){
+    var boton = ev.target.closest("[data-copiar]");
+    if (!boton) return;
+    var duenio = boton.closest(".preview");
+    var texto = duenio && duenio.querySelector(".bloque");
+    if (!texto || !navigator.clipboard) return;
+    navigator.clipboard.writeText(texto.textContent || "").then(function(){
+      var antes = boton.textContent;
+      boton.textContent = "copiado";
+      setTimeout(function(){ boton.textContent = antes; }, 1400);
+    });
   });
 
   // --- el tutorial se cierra por ahora ------------------------------------

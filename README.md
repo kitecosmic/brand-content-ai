@@ -226,6 +226,12 @@ Desde el detalle podés generar, aprobar, o escribir qué está mal y regenerar.
 acciones largas se disparan en segundo plano y el estado real se lee de la base,
 así que refrescar siempre dice la verdad.
 
+**Cualquier entregable se mira en grande y se descarga**, sea un video, una
+imagen, un carrusel o un texto. Tocás la pieza y se abre a pantalla completa; en
+un carrusel las flechas (o ← →) recorren los slides sin salir del visor, y cada
+uno se baja por separado. El archivo se guarda con el nombre de la pieza, no con
+un id. El texto además se copia de un click.
+
 **Una pieza que se cortó lo dice.** Si el proceso que la generaba murió (cerraste
 la terminal, se reinició el servidor), la pieza queda marcada como **detenido** —
 no como "generando" — con desde cuándo, en qué fase se cortó, el error real del

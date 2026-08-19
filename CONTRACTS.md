@@ -413,6 +413,13 @@ startWeb(cfg, store, handlers, { port?, host?, log? }) -> Promise<http.Server>
   entregable de la revisión previa sigue en disco y se sirve en
   `/asset/<id>/r<N>`. La pieza lo muestra como "lo último que salió bien" en vez
   de decir que no hay nada.
+- **Entregables:** `/asset/...` sirve inline (es la misma URL del `<img>` y del
+  `<video>`) y con `?descargar=1` agrega `content-disposition: attachment` con
+  el nombre derivado del ángulo de la pieza. Todo lo que se pueda ampliar lleva
+  `data-ampliar` + `data-nombre` + `data-descargar`; el visor de `ui.mjs` es uno
+  solo por página y se llena **clonando** ese elemento, asi que no sabe ni tiene
+  que saber si es imagen, video o texto. Un contenedor con `data-galeria` —los
+  slides de un carrusel— hace que el visor los recorra con flechas.
 - **Marca activa:** cookie `bca_marca`; sin ella, `store.defaultBrand()`.
 - **Tema:** cookie `bca_tema` (auto | claro | oscuro) — la lee el server para
   servir el HTML ya pintado y que no haya parpadeo. `auto` deja mandar a la
