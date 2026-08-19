@@ -1,0 +1,51 @@
+{
+  "name": "brand-content-ai",
+  "version": "0.2.0",
+  "description": "Genera contenido de marketing (video, carrusel, imagen, texto) con la identidad de tu marca. Le das una URL, arma la marca y produce las piezas. Cero dependencias npm.",
+  "license": "AGPL-3.0-or-later",
+  "author": "Joel",
+  "homepage": "https://github.com/kitecosmic/brand-content-ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kitecosmic/brand-content-ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kitecosmic/brand-content-ai/issues"
+  },
+  "keywords": [
+    "ai",
+    "content-generation",
+    "marketing",
+    "brand",
+    "social-media",
+    "video-generation",
+    "carousel",
+    "telegram-bot",
+    "minimax",
+    "hyperframes",
+    "content-calendar"
+  ],
+  "private": false,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "brand-content-ai": "./src/cli.mjs",
+    "bca": "./src/cli.mjs"
+  },
+  "scripts": {
+    "bca": "node --disable-warning=ExperimentalWarning src/cli.mjs",
+    "doctor": "node --disable-warning=ExperimentalWarning src/cli.mjs doctor",
+    "sync": "node --disable-warning=ExperimentalWarning src/cli.mjs sync",
+    "plan": "node --disable-warning=ExperimentalWarning src/cli.mjs plan",
+    "generate": "node --disable-warning=ExperimentalWarning src/cli.mjs generate",
+    "deliver": "node --disable-warning=ExperimentalWarning src/cli.mjs deliver",
+    "bot": "node --disable-warning=ExperimentalWarning src/cli.mjs bot",
+    "run": "node --disable-warning=ExperimentalWarning src/cli.mjs run",
+    "status": "node --disable-warning=ExperimentalWarning src/cli.mjs status",
+    "costs": "node --disable-warning=ExperimentalWarning src/cli.mjs costs",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.mjs\"",
+    "web": "node --disable-warning=ExperimentalWarning src/cli.mjs web"
+  }
+}

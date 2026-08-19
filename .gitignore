@@ -1,0 +1,37 @@
+# --- secretos y configuracion de tu maquina ---
+.env
+.env.*
+!.env.example
+brand-content-ai.config.local.json
+
+# --- estado y salidas ---
+# data/: base sqlite con marcas, calendario, costos y los ajustes (incluye API keys)
+data/
+# content/: las piezas generadas
+content/
+# projects/: proyectos de HyperFrames (uno por pieza + el base de cada marca)
+projects/
+
+# --- notas privadas ---
+# Runbooks con IPs, claves o datos de servidores: que no lleguen al repo ni por
+# accidente. Tu configuracion y tus secretos viven fuera del proyecto
+# (LOCALAPPDATA/brand-content-ai en Windows, ~/.config/brand-content-ai en el resto).
+docs/private/
+*-private.md
+NOTES.md
+
+# --- entorno ---
+node_modules/
+*.log
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- herramientas de agentes ---
+.claude/
+CLAUDE.md

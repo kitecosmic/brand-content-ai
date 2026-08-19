@@ -1,0 +1,449 @@
+# brand-content-ai
+
+[![licencia: AGPL-3.0](https://img.shields.io/badge/licencia-AGPL--3.0-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A522.5-brightgreen.svg)](https://nodejs.org)
+[![dependencias](https://img.shields.io/badge/dependencias%20npm-0-brightgreen.svg)](package.json)
+
+Generador de contenido para tus marcas. Le das la URL de una marca, arma su
+identidad (paleta, tipografías, voz, hechos citables), y a partir de ahí genera
+piezas — video, carrusel, imagen, texto — desde un panel web o desde Telegram.
+Si algo no te gusta, se lo decís con palabras y lo rehace atendiendo el comentario.
+
+Corre en tu PC o en un servidor, habla contra la API de MiniMax con formato
+Anthropic y **no tiene una sola dependencia npm**.
+
+---
+
+## Cómo funciona
+
+```
+URL de la marca ──► identidad (paleta + tipografías + voz + frame.md)
+       │                          │
+       └──sync──► hechos citables │
+                       │          │
+                       ▼          ▼
+     tab Crear ──► brief ──► composición ──► render ──► pieza
+     calendario ──►                (HyperFrames)          │
+                                                          ▼
+                                            Telegram ◄── entrega + control
+                                                          │
+                                    /no <id> <motivo> ──► rehace atendiendo el motivo
+```
+
+Cinco decisiones que explican el resto del diseño:
+
+**La marca es un dato, no una constante.** Se crea desde una URL: se lee el
+sitio, se propone la identidad, se bajan las tipografías de Google Fonts y se
+embeben en base64 (el render no tiene red). El modelo decide los valores; el
+código arma el `frame.md` y el proyecto base. Podés tener varias marcas en la
+misma instancia y cada pieza pertenece a una.
+
+**El contenido sale de fuentes verificables, no de la imaginación.** `sync` lee
+las fuentes de la marca — su sitio, o repos en disco — y destila qué es el
+producto y qué hechos son citables, cada uno con la página o el archivo donde se
+verificó. La generación sólo puede usar esos hechos. Es marketing público: un
+número inventado acá termina en un anuncio.
+
+**Los visuales son HyperFrames, no un modelo de imagen.** Composiciones HTML
+renderizadas a MP4/PNG. Marca exacta, texto perfecto, resultado determinista y
+sin costo por imagen. Cada pieza clona el proyecto base de su marca en vez de
+regenerar el sistema de diseño — eso es lo que mantiene la marca consistente
+entre piezas.
+
+**El estado vive en SQLite, no en memoria.** El bot, el scheduler y la CLI son
+procesos distintos que tienen que ver lo mismo. Cada pieza recorre
+`planned → briefed → building → built → delivered → approved | rejected`, y cada
+regeneración queda archivada en `revisions` para poder comparar y volver atrás.
+
+**Telegram por long polling, no webhook.** El sistema corre en una PC detrás de
+NAT: no hay IP pública ni puertos que abrir. El bot sólo obedece al chat que
+configures.
+
+---
+
+## Puesta en marcha
+
+```powershell
+git clone https://github.com/kitecosmic/brand-content-ai
+cd brand-content-ai
+npm run web        # http://127.0.0.1:4317
+```
+
+No hay nada que instalar: cero dependencias npm. El panel te lleva de la mano
+desde ahí:
+
+1. **Creás tu cuenta** — email y contraseña. La primera es la dueña de la
+   instalación: puede invitar al equipo y tocar los ajustes.
+2. **Conectás el modelo** — pegás la API key de MiniMax
+   ([platform.minimax.io](https://platform.minimax.io)). Es lo único imprescindible.
+3. **Creás tu marca** — pegás la URL de tu sitio y saca de ahí los colores, la
+   tipografía, el tono y de qué habla el producto.
+4. **Leés sus fuentes** — de ahí salen los hechos que el contenido puede afirmar.
+5. **Pedís tu primera pieza** — decís qué querés comunicar y elegís el formato.
+
+La pestaña **Empezar** es un asistente: una tarjeta por vez, con su formulario
+adentro y "siguiente". Los pasos se marcan solos mirando el estado real —si
+borrás la marca, el paso vuelve a estar pendiente— y se puede volver a recorrer
+cuando quieras. Cuando terminás deja de aparecer, y si te cansa antes hay un
+"no mostrarlo mas" que lo apaga para siempre.
+
+Una instalación nueva arranca **sin ninguna marca**: no se inventa una de
+ejemplo. Lo primero que hacés es crear la tuya con la URL de tu sitio.
+
+Telegram es opcional (sin él, el contenido se ve en el panel) y todo lo que se
+configura desde **Ajustes** se aplica al instante, sin reiniciar. Si preferís
+variables de entorno para un deploy automatizado, `cp .env.example .env` sirve
+igual.
+
+### Si venís de una versión con el nombre viejo
+
+El proyecto se llamaba `adsai`. Al actualizar no hay que hacer nada: la primera
+vez que arranca renombra solo el archivo de config, la base y la carpeta de datos,
+y las variables `ADSAI_*` se siguen leyendo como respaldo de las `BCA_*`, así que
+tu `.env` funciona sin tocarlo. Los proyectos ya renderizados conservan su carpeta
+`.adsai/`, que se sigue leyendo; los nuevos usan `.bca/`. Lo único que se pierde
+son las sesiones abiertas del panel: hay que volver a entrar una vez.
+
+## Comandos
+
+| Comando | Qué hace |
+|---|---|
+| `npm run bca marca nueva -- --url X` | crea una marca leyendo ese sitio `[--nombre N] [--colores "#a,#b"] [--notas "..."]` |
+| `npm run bca marca listar` | las marcas que hay, con su paleta |
+| `npm run bca marca revisar <id> "mas oscuro"` | ajusta la marca y guarda la version anterior |
+| `npm run bca marca usar <id>` | cambia la marca por defecto |
+| `npm run doctor` | verifica Node, el modelo, Telegram, marcas y fuentes |
+| `npm run sync` | lee las fuentes de la marca activa `[-- --brand X] [--force]` |
+| `npm run plan -- --days 14` | genera el calendario `[-- --brand X]` |
+| `npm run generate` | construye las piezas pendientes |
+| `npm run generate -- <id>` | construye una pieza puntual |
+| `npm run deliver` | manda a Telegram lo que esté construido |
+| `npm run bot` | deja el bot de Telegram escuchando **y levanta el panel web** `[-- --port N]` |
+| `npm run web` | solo el panel web `[-- --port N]` |
+| `npm run run` | ciclo completo: sync → plan (si hace falta) → generate → deliver |
+| `npm run status` | qué hay y en qué estado |
+| `npm run costs` | cuánto se gastó, por tipo de operación |
+
+## El panel web — http://127.0.0.1:4317
+
+`npm run bot` levanta el panel junto al bot; `npm run web` levanta solo el panel.
+
+Cuatro pestañas, una idea por pestaña:
+
+- **Crear** — decís qué querés comunicar, elegís formato e idioma, y sale ahora.
+  No toca el calendario: es la pieza que necesitás hoy. La página muestra la fase
+  en vivo (brief, componiendo, revisando el layout, renderizando).
+- **Calendario** — lo planificado de la marca activa, por semana, con el estado
+  de cada pieza. Desde ahí se planifica, se genera lo pendiente y se agenda a mano.
+- **Marcas** — crear una marca desde una URL, ver su identidad con su tipografía
+  real, y cambiarla escribiendo qué no te gusta. Cada cambio queda como revisión.
+- **Costos** — cuánto se gastó, por tipo de operación.
+- **Ajustes** — la API key del modelo, Telegram, la clave del panel y la ruta de
+  ffmpeg. Lo que guardás acá manda sobre el `.env` y se aplica sin reiniciar;
+  los secretos se guardan en la base y nunca se vuelven a mostrar enteros.
+
+Arriba: el selector de marca activa, la navegación y el tema.
+
+**El panel se pinta con la marca que estás mirando.** Los colores salen de su
+paleta y los títulos de su tipografía real, que ya está embebida en disco. Cambiás
+de marca y cambia la pantalla; la franja de color del borde superior es la paleta
+completa. Es marca blanca de verdad, y de paso te muestra la identidad funcionando
+antes de generar una sola pieza. Con cero marcas el panel cae en un neutro sobrio,
+y el botón de tema fuerza claro u oscuro cuando querés ignorar la marca.
+
+Que esto sea seguro no es casualidad: `normalizePalette` ya garantiza los
+contrastes WCAG de toda paleta antes de guardarla, así que ninguna marca puede
+dejar el panel ilegible.
+
+Desde el detalle podes generar, aprobar, o escribir que esta mal y regenerar. Las
+acciones largas se disparan en segundo plano y el estado real se lee de la base,
+asi que refrescar siempre dice la verdad.
+
+**Las acciones que cuestan plata avisan primero.** "Generar lo pendiente" no
+arranca: te lleva a una pantalla que dice cuántas piezas son, de qué marca, y
+cuánto va a salir — estimado con el promedio real de tu instalación, formato por
+formato. Un carrusel puede costar más de veinte dólares; ese número tiene que
+estar antes del click y no después, en la pantalla de costos. Además genera solo
+las piezas de la marca activa y entrega a Telegram solo lo que generó esa corrida.
+
+**Las marcas se pueden borrar**, desde la lista o desde su detalle. La
+confirmación dice qué se va (la identidad, su historial, sus fuentes) y qué
+queda: las piezas ya generadas se conservan, huérfanas, porque costaron plata.
+Si la marca fue una prueba y querés que no quede nada, hay una casilla para
+borrar también sus carpetas — y solo se tocan las que están dentro de las
+carpetas de proyectos y contenido de esta instalación.
+
+**El asistente de primera corrida** tiene un "no mostrarlo mas". Sin eso volvía
+solo cada vez que borrabas una marca de prueba, porque los pasos se calculan del
+estado real. Sigue disponible en `/empezar` cuando lo necesites.
+
+Si una pieza falla en una fase que mejora sola al reintentar (layout flojo, el
+linter en contra, una escena que el modelo no entrego), el sistema la reintenta solo
+una vez antes de darla por fallada: `limits.retriesPerItem` en la config, 0 para
+volver al comportamiento de apretar generar a mano.
+
+Lo que **no** se reintenta es un `check` estancado. Cuando el linter devuelve dos
+veces exactamente los mismos errores, la reparación no está aportando: el problema
+es estructural y volver a intentar cuesta un brief y un compose completos para
+llegar al mismo lugar. Ahí corta, imprime los errores en consola y los deja en el
+detalle de la pieza. Mientras la reparación sí avanza (el linter cambia de queja)
+se usan los dos intentos, y cada reparación recibe qué hizo la anterior y qué
+errores sobrevivieron, para que no repita el mismo arreglo.
+
+Cuando el puerto 4317 esta ocupado, el arranque dice que PID lo tiene y como
+cerrarlo; para levantarlo en otro puerto, `npm run bot -- --port 4318`.
+
+### Publicarlo en un servidor
+
+El panel **se niega a escuchar fuera de 127.0.0.1 si no hay forma de
+autenticarse** — ni cuentas creadas ni `BCA_PANEL_PASSWORD`. Un panel abierto
+es la tarjeta de crédito de cualquiera que pase. Con tu cuenta ya creada, podés
+publicarlo directamente. Para verlo desde otra máquina sin publicarlo, un túnel
+SSH:
+
+```bash
+ssh -L 4317:127.0.0.1:4317 tu-usuario@tu-pc
+```
+
+Para publicarlo de verdad: creá tu cuenta primero, ponelo detrás de HTTPS
+(nginx, Caddy, Cloudflare) y arrancá con el bind abierto.
+
+```bash
+BCA_SESSION_SECRET=una-cadena-random   # opcional: las sesiones sobreviven al reinicio
+npm run web -- --host 0.0.0.0
+```
+
+`BCA_PANEL_PASSWORD` sigue existiendo para instalaciones que venían con una
+clave compartida: si hay cuentas creadas, se ignora.
+
+## Formatos
+
+| Formato | Qué sale | Lienzo |
+|---|---|---|
+| `text` | post listo para pegar | — |
+| `image` | una imagen | 1080×1080 |
+| `story` | historia vertical a pantalla completa | 1080×1920 |
+| `carousel` | 6 slides | 1080×1350 |
+| `video` | MP4 horizontal | 1920×1080 |
+| `reel` | MP4 vertical corto | 1080×1920 |
+
+Los verticales (`story`, `reel`) se componen para la **franja central**: Instagram,
+WhatsApp y Facebook dibujan su interfaz sobre la pieza —el avatar arriba, la barra
+de respuesta abajo—, así que nada legible entra en el 14% superior ni en el 20%
+inferior. El fondo sí llega a los bordes; el texto no. El titular manda: ocupa el
+tercio superior de la zona viva y es 3 a 5 veces más grande que el resto.
+
+**Agregar un formato tuyo** no requiere tocar el pipeline. En `brand-content-ai.config.json`:
+
+```json
+"portada": { "enabled": true, "kind": "still", "aspect": "1200x630", "engine": "hyperframes" }
+```
+
+`kind` es lo único que el sistema necesita saber: `text` (el brief es el
+entregable), `still` (una imagen), `slides` (varias) o `motion` (video). El
+lienzo, la duración y la cantidad de slides salen del mismo bloque.
+
+## Desde Telegram (opcional)
+
+Sin Telegram configurado, Brand Content AI funciona completo: se crea, se genera y se
+revisa todo desde el panel. Telegram agrega dos cosas: recibir la pieza en el
+celular apenas está lista, y controlar el sistema por chat.
+
+
+| Comando | Qué hace |
+|---|---|
+| `/hoy` | qué toca hoy |
+| `/pendientes` | lo que falta entregar |
+| `/plan 14` | replanificar |
+| `/generar <id>` | forzar una pieza |
+| `/ok <id>` | aprobar |
+| `/no <id> <motivo>` | rechazar y regenerar **atendiendo el motivo** |
+| `/costos` | gasto |
+| `/ayuda` | ayuda |
+
+El `/no` es la pieza central: el motivo entra en el prompt del siguiente brief y
+queda archivado junto con la versión que descartaste.
+
+## Dejarlo corriendo solo
+
+Dos procesos, ambos con el Programador de tareas de Windows:
+
+**El bot, siempre vivo.** Tarea al iniciar sesión, reinicio ante fallo:
+
+```powershell
+schtasks /Create /TN "brand-content-ai-bot" /SC ONLOGON /RL LIMITED ^
+  /TR "cmd /c cd /d C:\ruta\a\brand-content-ai && npm run bot" /F
+```
+
+**El ciclo diario.** Una vez por día, a la hora que definas en
+`brand-content-ai.config.json` (`calendar.publishHourLocal`):
+
+```powershell
+schtasks /Create /TN "brand-content-ai-run" /SC DAILY /ST 09:00 ^
+  /TR "cmd /c cd /d C:\ruta\a\brand-content-ai && npm run run" /F
+```
+
+> Con la PC apagada no se genera nada — es la contrapartida de correr local.
+> Si querés que corra 24/7, el sistema se mueve a un servidor casi sin cambios:
+> el modelo ya se habla por HTTP con una API key, así que lo único atado a esta
+> máquina son las rutas de `brand-content-ai.config.json` y el Chrome que usa el render.
+
+## Costo
+
+Cada llamada al backend gasta por tokens de entrada y salida, y Brand Content AI calcula
+el costo localmente con `brand-content-ai.config.json -> minimax.pricing` (USD por 1K
+tokens: `{ input, output, cacheRead }`; los tokens que MiniMax sirve desde
+cache se cobran aparte y mucho mas barato). Por eso cada tarea elige su modelo en `cfg.models`, y las
+reparaciones mecánicas del linter van al modelo chico:
+
+```json
+"models": {
+  "plan":    "MiniMax-M3",
+  "brief":   "MiniMax-M3",
+  "copy":    "MiniMax-M3",
+  "compose": "MiniMax-M3",
+  "repair":  "MiniMax-M3",
+  "digest":  "MiniMax-M3"
+}
+```
+
+Todo en M3 por calidad consistente: la diferencia de costo entre modelos no
+compensa el ruido cuando el digest dice una cosa y el brief/compose dice otra.
+Si querés ahorrar en tareas mecánicas, agregás el modelo chico al bloque
+`pricing` y lo cambiás puntualmente acá.
+
+Los precios que vienen en la config son la tarifa publicada de MiniMax-M3
+(agosto 2026: $0,30/M de entrada, $1,20/M de salida, $0,06/M de lectura de
+cache) para pedidos de hasta 512K tokens de entrada; arriba de eso la tarifa
+se duplica. Si un modelo no tiene pricing configurado, su `cost_usd` queda en
+`null` y `npm run costs` lo cuenta como 0.
+
+`npm run costs` muestra el gasto real por tipo de operación. El propio render
+de HyperFrames no cuesta nada (es Chrome local); lo que se paga es que el
+modelo escriba la composición y, cuando `check` falla, que la repare.
+
+Dónde se va la plata, en orden:
+
+1. **Compose por escena** — cada llamada recarga el system prompt y re-inlinia
+   `frame.md` + `reference.html` aunque escriba una sola escena. Por eso las
+   escenas van de a dos por llamada (`limits.scenesPerCall: 2`): el costo fijo
+   se amortiza y las sesiones concurrentes bajan de 6 a 3 (que a la vez evita
+   los timeouts masivos que se ven con seis llamadas en paralelo).
+2. **Reparaciones (cuando `check` falla)** — son mecánicas (aplicar el
+   dictamen del linter). También van a M3: el ahorro de un modelo chico no
+   compensa la inconsistencia con el resto del flujo. El último intento de
+   cada pieza vuelve a `models.compose` como respaldo.
+3. **Brief** — una llamada por pieza.
+
+El regulador más grande es el mix: un video o carrusel cuesta ~20× lo que un
+post de texto, así que bajarlos en `calendar.mix` (o menos escenas por pieza)
+recorta el gasto de forma directa.
+
+## Estructura
+
+```
+brand-content-ai.config.json     formatos, cadencia, modelos, limites (la marca vive en la base)
+.env                  secretos (git-ignored)
+src/cli.mjs           el unico lugar que imprime a consola
+src/lib/
+  config.mjs          config + .env + utilidades de fecha
+  store.mjs           SQLite: marcas, items, revisiones, fuentes, costos
+  claude.mjs          wrapper HTTP del backend MiniMax (formato Anthropic)
+  brand.mjs           crear e iterar marcas: identidad, frame.md, proyecto base
+  site.mjs            leer un sitio (texto, colores, tipografias) sin dependencias
+  fonts.mjs           Google Fonts -> CSS con las fuentes embebidas en base64
+  knowledge.mjs       fuentes -> digest + hechos citables
+  calendar.mjs        calendario de contenido
+  generate.mjs        brief -> composicion -> render
+  telegram.mjs        entrega + bot de control
+  web.mjs             panel: ruteo, acciones, login
+  views.mjs           las vistas del panel (HTML puro)
+  ui.mjs              layout, estilos (tematizados por marca) y el JS propio
+  color.mjs           hex, contraste WCAG y mezcla — lo usan brand.mjs y ui.mjs
+CONTRACTS.md          contratos internos entre modulos
+```
+
+**Nada tuyo vive en la carpeta del codigo.** La configuracion de tu maquina, los
+secretos y los datos van aparte, para que el repo se pueda clonar, comprimir o
+publicar sin llevarse nada:
+
+```
+%LOCALAPPDATA%\brand-content-ai\   (Windows)   ~/.config/brand-content-ai/   (Linux y macOS)
+  config.json               rutas de repos, projectsDir, marca semilla
+  .env                      secretos, si preferis archivo antes que la pantalla de Ajustes
+  data/brand-content-ai.db             marcas, calendario, costos y los ajustes guardados
+  data/font-cache/          tipografias ya descargadas
+  content/                  las piezas generadas
+```
+
+Se mueve entero con `BCA_HOME`. Una instalacion que ya tenia `./data` la sigue
+usando: cambiarla de lugar romperia las rutas de las piezas ya generadas.
+
+## El equipo
+
+Todos los que entran ven las mismas marcas y pueden crear, generar y descargar
+contenido. La diferencia está en dos cosas:
+
+| | Dueño | Miembro |
+|---|---|---|
+| Crear y generar contenido, descargar | sí | sí |
+| Crear y ajustar marcas | sí | sí |
+| Ajustes (API keys, Telegram) | sí | no |
+| Invitar y sacar gente | sí | no |
+| Borrar una marca | sí | no |
+
+**Invitar** genera un link de un solo uso que vence en 7 días — se lo pasás por
+donde quieras. No hay servidor de correo y no vamos a pedirte uno para sumar a
+tres personas. Si ponés el email al invitar, esa invitación sólo sirve para ese
+email; si lo dejás vacío, sirve para quien tenga el link.
+
+Sacar a alguien le corta el acceso **en el acto**: la sesión se valida contra la
+base en cada request, no contra un token que sobrevive.
+
+Las contraseñas se guardan con `scrypt` y salt por usuario. No hay recuperación
+por email (no hay correo saliente): si alguien la pierde, el dueño le genera una
+invitación nueva.
+
+## Licencia
+
+**AGPL-3.0-or-later.** Podés usarlo, estudiarlo, modificarlo y desplegarlo
+—incluso dentro de una empresa— gratis. La contrapartida es la cláusula de red:
+si ofrecés una versión modificada **a través de internet**, tenés que
+publicar el código de esa versión bajo la misma licencia. Por eso el panel
+muestra un link al código fuente en el pie: si lo forkeás y lo desplegás,
+apuntá `REPO_URL` en `src/lib/ui.mjs` a tu fork.
+
+Lo que la AGPL **no** hace: impedir que alguien cobre. Un competidor puede montar
+un SaaS con este código y facturarlo, siempre que publique sus modificaciones.
+Si querés que no pueda hacerlo sin tu permiso, el camino habitual es la **licencia
+dual**: este repo sigue en AGPL, y a quien no quiera cumplir la AGPL (porque
+quiere cerrar su código o revenderlo) le vendés una licencia comercial. Es lo que
+hacen MongoDB, Grafana e iText. Para eso hace falta que todos los aportes lleguen
+con un CLA — sin eso, no podés relicenciar el código de otros.
+
+Para una licencia comercial: abrí un issue o escribí al mail del perfil.
+
+## Otra marca
+
+Desde el panel (tab **Marcas**) o desde la terminal:
+
+```bash
+npm run bca marca nueva -- --url https://otramarca.com --notas "mas calida, publico no tecnico"
+npm run bca marca usar otramarca
+npm run sync
+```
+
+Lo que hace: lee el sitio (incluso si es una SPA — busca el copy en el payload
+de hidratación y en el bundle), propone identidad, ajusta la paleta hasta que
+cumpla contraste WCAG, baja las tipografías y escribe el `frame.md`. Después se
+itera hablando:
+
+```bash
+npm run bca marca revisar otramarca "el acento en violeta y menos serifas"
+```
+
+Cada revisión guarda la anterior: si el cambio empeoró la marca, la versión
+previa sigue en el historial.
+
+Los repos de `brand-content-ai.config.json` siguen valiendo para la marca original — un
+repo es otra clase de fuente, igual que una URL.

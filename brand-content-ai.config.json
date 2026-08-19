@@ -1,0 +1,120 @@
+{
+  "$comment": "Configuracion del sistema. Los secretos NO van aqui (se cargan desde el panel o .env) y las rutas de tu maquina tampoco: van en brand-content-ai.config.local.json, que git ignora.",
+  "brand": {
+    "$comment": "Marca semilla, opcional. Si esta, la primera vez se importa como marca y se puede seguir usando; si no, crea tu marca desde el panel (tab Marcas) con la URL de tu sitio."
+  },
+  "repos": [],
+  "formats": {
+    "video": {
+      "enabled": true,
+      "aspect": "1920x1080",
+      "lengthSeconds": 40,
+      "engine": "hyperframes",
+      "workflow": "product-launch-video",
+      "kind": "motion"
+    },
+    "carousel": {
+      "enabled": true,
+      "aspect": "1080x1350",
+      "slides": 6,
+      "engine": "hyperframes",
+      "kind": "slides"
+    },
+    "image": {
+      "enabled": true,
+      "aspect": "1080x1080",
+      "engine": "hyperframes",
+      "kind": "still"
+    },
+    "text": {
+      "enabled": true,
+      "maxChars": 600,
+      "engine": "text",
+      "kind": "text"
+    },
+    "story": {
+      "$comment": "Historia vertical a pantalla completa (Instagram, WhatsApp, Facebook). Se compone para la franja central: la app tapa arriba y abajo con su propia interfaz.",
+      "enabled": true,
+      "kind": "still",
+      "aspect": "1080x1920",
+      "engine": "hyperframes"
+    },
+    "reel": {
+      "$comment": "Historia en movimiento / reel corto. Mismo lienzo vertical que story, pero renderiza MP4.",
+      "enabled": true,
+      "kind": "motion",
+      "aspect": "1080x1920",
+      "lengthSeconds": 20,
+      "engine": "hyperframes"
+    }
+  },
+  "calendar": {
+    "itemsPerWeek": 6,
+    "mix": {
+      "text": 2,
+      "image": 1,
+      "story": 1,
+      "carousel": 1,
+      "video": 1
+    },
+    "publishHourLocal": 9,
+    "timezone": "America/Argentina/Buenos_Aires"
+  },
+  "models": {
+    "$comment": "Todo en M3 por calidad: la diferencia de costo entre modelos chicos y grandes no compensa el ruido de inconsistencias cuando el digest dice una cosa y el brief/compose dice otra. Si mas adelante queres ahorrar en tareas mecanicas, volve a sumar una entrada para el modelo chico y cambialo puntualmente aca.",
+    "plan": "MiniMax-M3",
+    "brief": "MiniMax-M3",
+    "copy": "MiniMax-M3",
+    "compose": "MiniMax-M3",
+    "repair": "MiniMax-M3",
+    "digest": "MiniMax-M3",
+    "$brief": "El brief define la narrativa y las escenas: es UNA llamada por pieza y es donde se decide si el contenido es bueno. M3 es el default por calidad consistente.",
+    "$repair": "Las reparaciones de 'hyperframes check' aplican el dictamen del linter. Tambien en M3: las reparaciones son chicas en tokens, el ahorro de un modelo chico no se nota y la consistencia con el resto del flujo vale mas."
+  },
+  "minimax": {
+    "$comment": "Backend de modelo. El wrapper habla contra <baseUrl>/messages con la cabecera anthropic-version. baseUrl es el endpoint Anthropic-compatible de MiniMax: https://api.minimax.io/anthropic/v1 con key global (minimax.io) o https://api.minimaxi.com/anthropic/v1 con key de China continental — la key solo funciona en la region donde se compro. El secreto (ADSAI_MINIMAX_API_KEY) vive en .env, no aca. Si faltan precios por token, cost_usd queda en NULL y 'npm run costs' lo trata como 0.",
+    "baseUrl": "https://api.minimax.io/anthropic/v1",
+    "anthropicVersion": "2023-06-01",
+    "maxTokens": 32768,
+    "$maxTokens": "Tope de tokens de salida por llamada. 8192 quedaba justo: una llamada de compose escribe 2 composiciones de ~3,5k tokens cada una y, al cortarse, el bloque ```html sin cerrar directamente no se parsea (la escena se reporta como faltante). El endpoint acepta hasta 131072; 32768 da aire de sobra y no cuesta nada extra: se paga por token generado, no por el tope.",
+    "timeoutMs": 900000,
+    "pricing": {
+      "$comment": "USD por 1K tokens. Lo calcula el wrapper a partir de usage.input_tokens, usage.output_tokens y usage.cache_read_input_tokens que devuelve la API. Tarifa publicada de MiniMax-M3 (agosto 2026): $0.30/M in, $1.20/M out, $0.06/M de lectura de cache, para pedidos de hasta 512K tokens de entrada. Arriba de 512K la tarifa se duplica: si empezas a mandar prompts asi de largos, actualiza estos numeros.",
+      "MiniMax-M3": {
+        "input": 0.0003,
+        "output": 0.0012,
+        "cacheRead": 6e-05
+      }
+    }
+  },
+  "hyperframes": {
+    "$comment": "projectsDir es donde se arman los proyectos de cada pieza. referenceProject solo hace falta si venis de una instalacion vieja con un proyecto hecho a mano: las marcas nuevas generan el suyo.",
+    "projectsDir": "./projects",
+    "referenceProject": null,
+    "cliVersion": "0.7.109"
+  },
+  "telegram": {
+    "enabled": true,
+    "pollIntervalMs": 2000,
+    "$comment": "Long polling: funciona desde una PC local sin IP publica ni puertos abiertos."
+  },
+  "limits": {
+    "maxRegenerationsPerItem": 5,
+    "retriesPerItem": 1,
+    "$retriesPerItem": "Reintentos automaticos cuando la pieza falla en una fase que mejora sola al reintentar (layout, check, repair, compose, snapshot): cada una deja el terreno preparado —composiciones flojas borradas y anotadas, dictamen del linter, escenas buenas conservadas— y el intento siguiente suele pasar. Antes eso pedia volver a apretar generar a mano. Un fallo de brief no se reintenta: vuelve a fallar igual. 0 = como antes.",
+    "maxConcurrentGenerations": 2,
+    "claudeTimeoutMs": 900000,
+    "$claudeTimeoutMs": "Timeout por llamada al modelo. 15 minutos es generoso a proposito: un compose largo tarda minutos y cortarlo antes tira a la basura lo pagado. La contra es que un endpoint que acepta la conexion y no contesta se hace esperar los 15 minutos completos.",
+    "jobStaleSeconds": 120,
+    "$jobStaleSeconds": "Segundos sin latido para dar un trabajo por muerto. Con latido cada 20s, 120 tolera un tropiezo sin declarar muerto algo que sigue vivo.",
+    "scenesPerCall": 2,
+    "$scenesPerCall": "Cuantas composiciones escribe UNA llamada de compose. Cada 'claude -p' recarga ~30k tokens de contexto y relee frame.md + reference.html: escribir 2 escenas por llamada amortiza ese costo fijo (~-20/30% del compose) y ademas baja de 6 a 3 las sesiones concurrentes. 1 = como antes.",
+    "maxConcurrentScenes": 3,
+    "$maxConcurrentScenes": "Tope de llamadas de compose en paralelo. Con el backend HTTP cada llamada es un fetch (no un proceso de 350 MB), asi que lo que se satura son los limites de la API, no la RAM: por eso este numero manda tal cual. 0 = default (3). Con scenesPerCall 2 y tope 3, un carrusel de 6 va en 3 lotes de 2 — seis en paralelo terminaron en timeouts masivos en la primera corrida real."
+  },
+  "web": {
+    "port": 4317,
+    "host": "127.0.0.1",
+    "$comment": "Solo 127.0.0.1: el panel no tiene login. Para verlo desde afuera, tunel SSH."
+  }
+}
