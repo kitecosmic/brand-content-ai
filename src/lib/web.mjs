@@ -160,7 +160,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     const yo = conCuentas ? usuarioDeSesion(store, secreto, cookies.bca_sesion) : null;
 
     if (ruta === "/salir") {
-      res.writeHead(303, { location: "/login", "set-cookie": galleta("bca_sesion", "", 0) });
+      res.writeHead(303, { location: "/login", "set-cookie": galleta(esHttps(req), "bca_sesion", "", 0) });
       return res.end();
     }
 
@@ -253,8 +253,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
           base: baseUrl(req),
           // El selector de arriba guarda la marca en una cookie. Sin pasarla,
           // las acciones caian en la marca por defecto de la base: pedias una
-          // pieza para Keio y se generaba con la identidad de otra.
+          // pieza para la marca que estabas mirando y se generaba con la
+          // identidad de otra.
           marcaCookie: cookies.bca_marca,
+          // Las cookies que escriba esta accion se marcan Secure si la request
+          // llego por TLS. Aca no hay req: por eso viaja el dato ya resuelto.
+          seguro: esHttps(req),
         });
       }
       return enviar(res, 404, "text/plain; charset=utf-8", "no encontrado");
@@ -721,7 +725,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   // Acciones
   // -------------------------------------------------------------------------
 
-  async function accion(res, nombre, params, { usuario = { role: "owner" }, base = "", marcaCookie = "" } = {}) {
+  async function accion(res, nombre, params, { usuario = { role: "owner" }, base = "", marcaCookie = "", seguro = false } = {}) {
     // La marca con la que trabaja ESTA accion: la del selector, salvo que el
     // formulario nombre otra explicitamente.
     const activa = () => resolverMarca(marcaCookie);
@@ -843,7 +847,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         if (!store.getBrand(id)) return volver(atras(), { err: "esa marca no existe" });
         res.writeHead(303, {
           location: atras(),
-          "set-cookie": galleta("bca_marca", id, 60 * 60 * 24 * 365),
+          "set-cookie": galleta(seguro, "bca_marca", id, 60 * 60 * 24 * 365),
         });
         return res.end();
       }
@@ -907,7 +911,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
           location: `${atras() !== "/crear" ? atras() : "/marcas"}?msg=${encodeURIComponent(
             "Creando la marca: se lee el sitio, se propone la identidad y se bajan las tipografias.",
           )}`,
-          "set-cookie": galleta("bca_marca", "", 0),
+          "set-cookie": galleta(seguro, "bca_marca", "", 0),
         });
         return res.end();
       }
@@ -938,7 +942,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
           location: `${atras()}${atras().includes("?") ? "&" : "?"}msg=${encodeURIComponent(
             `Ahora se trabaja sobre ${brand.name}`,
           )}`,
-          "set-cookie": galleta("bca_marca", brand.id, 60 * 60 * 24 * 365),
+          "set-cookie": galleta(seguro, "bca_marca", brand.id, 60 * 60 * 24 * 365),
         });
         return res.end();
       }
@@ -1433,7 +1437,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       log?.(`[web] cuenta creada: ${user.email} (duenio)`);
       res.writeHead(303, {
         location: "/empezar",
-        "set-cookie": galleta("bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
+        "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
       });
       return res.end();
     } catch (err) {
@@ -1463,7 +1467,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       log?.(`[web] se sumo al equipo: ${user.email}`);
       res.writeHead(303, {
         location: "/empezar",
-        "set-cookie": galleta("bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
+        "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
       });
       return res.end();
     } catch (err) {
@@ -1511,7 +1515,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       }
       res.writeHead(303, {
         location: faltaOnboarding() ? "/empezar" : "/crear",
-        "set-cookie": galleta("bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
+        "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
       });
       return res.end();
     }
@@ -1534,7 +1538,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     }
     res.writeHead(303, {
       location: faltaOnboarding() ? "/empezar" : "/crear",
-      "set-cookie": galleta("bca_sesion", firmarSesionClave(), 60 * 60 * SESION_HORAS),
+      "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesionClave(), 60 * 60 * SESION_HORAS),
     });
     res.end();
   }
@@ -1599,8 +1603,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
 
 /** El origen tal como lo ve quien entro: hace falta para el link de invitacion. */
 function baseUrl(req) {
-  const proto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0] || "http";
-  return `${proto}://${req.headers.host ?? "127.0.0.1"}`;
+  return `${esHttps(req) ? "https" : "http"}://${req.headers.host ?? "127.0.0.1"}`;
 }
 
 function enviar(res, code, type, body) {
@@ -1633,8 +1636,23 @@ function leerCookies(req) {
   return out;
 }
 
-function galleta(nombre, valor, maxAge) {
-  return `${nombre}=${encodeURIComponent(valor)}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly`;
+/**
+ * Una cookie del panel.
+ *
+ * `Secure` se pone solo cuando la request llego por HTTPS, y no siempre: con el
+ * flag el navegador deja de mandarla por http, y entrar por el tunel SSH —que es
+ * http contra 127.0.0.1— dejaria de funcionar. Detras de un proxy con TLS la
+ * request trae `x-forwarded-proto: https`, y ahi si corresponde: sin el flag, un
+ * solo pedido en claro al mismo dominio le regala la sesion a quien mire la red.
+ */
+function galleta(seguro, nombre, valor, maxAge) {
+  const flag = seguro ? "; Secure" : "";
+  return `${nombre}=${encodeURIComponent(valor)}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly${flag}`;
+}
+
+/** Si la request llego por TLS, sea directo o a traves del proxy de adelante. */
+function esHttps(req) {
+  return String(req.headers["x-forwarded-proto"] ?? "").split(",")[0].trim() === "https";
 }
 
 /**

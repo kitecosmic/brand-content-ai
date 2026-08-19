@@ -11,15 +11,17 @@ El mantenimiento del día a día son dos comandos:
 git pull && ./deploy.sh
 ```
 
-**Qué corre.** Dos servicios sobre la misma imagen:
+**Qué corre.**
 
 | Servicio | Qué hace |
 |---|---|
 | `panel` | el panel web y, si Telegram está configurado, el bot en el mismo proceso |
 | `ciclo` | el ciclo diario (sync → plan → generate → deliver) a `calendar.publishHourLocal` |
+| `caddy` | HTTPS en tu dominio, solo si pusiste `PANEL_DOMINIO` en el `.env` |
 
-Son dos procesos y no uno porque el estado vive en SQLite y ya está pensado para
-compartirse: así una generación que se cuelga no se lleva puesto el panel.
+`panel` y `ciclo` son dos procesos y no uno porque el estado vive en SQLite y ya
+está pensado para compartirse: así una generación que se cuelga no se lleva
+puesto el panel.
 
 **Qué queda en el host.** `data/` (la base, con marcas, calendario, costos y tus
 API keys), `content/` (las piezas entregadas) y `projects/` (los proyectos de
@@ -120,21 +122,109 @@ El primero revisa el backend del modelo, la cuenta, la marca y el conocimiento
 sincronizado. El segundo revisa lo del render: CPU, memoria, disco, ffmpeg,
 Chrome y `/dev/shm`.
 
-## Publicarlo con HTTPS
+## Publicarlo en tu dominio, con HTTPS
 
-El panel queda en loopback; quien lo expone es un proxy del host. Con Caddy son
-tres líneas y el certificado se renueva solo:
+Poné el dominio en el `.env` y `./deploy.sh` levanta Caddy: publica el panel ahí,
+pide el certificado a Let's Encrypt y lo renueva solo. No hay certificado que se
+venza un domingo ni cron que recordar.
+
+**1. Apuntá el DNS al servidor.** En el panel de tu proveedor de dominio, un
+registro `A`:
+
+| Tipo | Nombre | Valor |
+|---|---|---|
+| `A` | `panel` (o `@` para el dominio pelado) | la IP del servidor |
+
+Esperá a que propague y verificá **desde el servidor**. Si esto no devuelve tu
+IP, Caddy no va a poder sacar el certificado y no tiene sentido seguir:
+
+```bash
+getent hosts panel.tudominio.com     # o: dig +short panel.tudominio.com
+```
+
+**2. Abrí los puertos 80 y 443.** El 80 no es opcional: por ahí verifica Let's
+Encrypt que el dominio es tuyo, y por ahí redirige Caddy a HTTPS.
+
+```bash
+sudo ufw status                      # si dice "inactive", no hay nada que hacer
+sudo ufw allow 80,443/tcp            # si está activo
+```
+
+Si tu proveedor tiene su propio firewall —Hetzner Cloud Firewall, los Security
+Groups de AWS— abrilos también ahí: son dos capas distintas.
+
+**3. Poné el dominio en el `.env`.**
+
+```bash
+nano .env
+```
 
 ```
-panel.tudominio.com {
-    reverse_proxy 127.0.0.1:4317
-}
+PANEL_DOMINIO=panel.tudominio.com
 ```
 
-El panel ya lee `x-forwarded-proto`, así que los redirects salen bien. En el
-firewall: 22, 80 y 443, nada más — el 4317 nunca se abre hacia afuera.
+**4. Desplegá.**
 
-Si preferís no exponerlo, el túnel SSH del paso 5 sirve para siempre.
+```bash
+./deploy.sh
+```
+
+El script ve el dominio, activa el servicio de Caddy y te lo dice. También
+escribe `COMPOSE_PROFILES=dominio` en tu `.env`, que es lo que hace que
+`docker compose logs`, `ps` y `restart` incluyan a Caddy sin ningún flag.
+
+**5. Verificá.** El certificado se pide en la primera visita al dominio:
+
+```bash
+curl -I https://panel.tudominio.com          # tiene que responder 303 o 200
+docker compose logs caddy | grep -i "certificate obtained"
+```
+
+Y entrás desde cualquier navegador a `https://panel.tudominio.com`. Ya no hace
+falta el túnel SSH — aunque sigue funcionando, si lo preferís.
+
+### Cambiar de dominio, o sacarlo
+
+Las dos cosas son editar el `.env` y volver a desplegar:
+
+```bash
+nano .env        # PANEL_DOMINIO=otro.tudominio.com  (o vacío para sacarlo)
+./deploy.sh
+```
+
+Con un dominio nuevo, Caddy pide el certificado que corresponda; el anterior
+queda guardado en el volumen por si volvés. Vaciando la variable, `deploy.sh`
+baja Caddy y el panel vuelve a quedar solo en `127.0.0.1:4317`.
+
+Para reiniciar el proxy sin tocar el panel:
+
+```bash
+docker compose restart caddy
+docker compose logs -f caddy
+```
+
+### Si el certificado no sale
+
+```bash
+docker compose logs caddy | tail -30
+```
+
+Casi siempre es una de estas tres:
+
+- **El DNS no apunta al servidor todavía.** `getent hosts tu.dominio.com` desde
+  el servidor tiene que devolver su propia IP. Si acabás de crear el registro,
+  puede tardar; Caddy reintenta solo.
+- **El puerto 80 está ocupado o cerrado.** `sudo ss -tlnp | grep -E ':(80|443)'`
+  te dice quién lo tiene: si hay un nginx o un apache viejo, hay que pararlo
+  (`sudo systemctl disable --now nginx`).
+- **Let's Encrypt te frenó por repetir.** Son cinco certificados por dominio por
+  semana. Si probaste muchas veces con el DNS mal, esperá — el mensaje del log
+  dice cuánto.
+
+El panel, del otro lado, ya está preparado: lee `x-forwarded-proto` (que Caddy
+manda solo), así que los redirects salen en `https` y las cookies de sesión se
+marcan `Secure`. El 4317 nunca se abre hacia afuera; en el firewall alcanza con
+22, 80 y 443.
 
 ## Mantenimiento
 

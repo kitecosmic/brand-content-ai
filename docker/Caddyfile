@@ -1,0 +1,22 @@
+# El panel detras de HTTPS.
+#
+# El dominio sale del .env (PANEL_DOMINIO). Caddy pide el certificado a Let's
+# Encrypt la primera vez que alguien entra y lo renueva solo: no hay cron que
+# recordar ni certificado que se venza un domingo.
+#
+# Caddy comparte la red del servidor igual que el panel, asi que 127.0.0.1:4317
+# es el panel y no hace falta publicarle ningun puerto ni ponerlos en la misma
+# red de Docker. Hacia afuera solo escucha 80 y 443.
+
+{$PANEL_DOMINIO} {
+	reverse_proxy 127.0.0.1:4317
+
+	# El panel es una sesion con credenciales: una vez que el navegador sabe que
+	# este dominio habla HTTPS, que no vuelva a intentar en claro.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	log {
+		output stdout
+		format console
+	}
+}

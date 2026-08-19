@@ -114,9 +114,24 @@ que la primera vez entrás por un túnel SSH desde tu máquina:
 ssh -L 4317:127.0.0.1:4317 usuario@tu-servidor
 ```
 
-Y abrís `http://127.0.0.1:4317` en tu navegador. De ahí en más, actualizar es
-`git pull && ./deploy.sh`. El resto —tamaño del servidor, HTTPS, respaldo,
-diagnóstico— está en **[docs/deploy.md](docs/deploy.md)**.
+Y abrís `http://127.0.0.1:4317` en tu navegador, donde te pide crear la cuenta.
+
+**Con tu dominio, en vez del túnel.** Apuntá un registro `A` del dominio a la IP
+del servidor, abrí los puertos 80 y 443, y poné el dominio en el `.env`:
+
+```bash
+# 4. HTTPS con dominio propio (opcional)
+nano .env    # PANEL_DOMINIO=panel.tudominio.com
+./deploy.sh
+```
+
+`deploy.sh` levanta Caddy, que pide el certificado a Let's Encrypt en la primera
+visita y lo renueva solo. Cambiar de dominio o sacarlo es editar esa misma línea
+y volver a correrlo.
+
+De ahí en más, actualizar es `git pull && ./deploy.sh`. El resto —tamaño del
+servidor, el DNS paso a paso, respaldo, diagnóstico— está en
+**[docs/deploy.md](docs/deploy.md)**.
 
 De las dos formas, el panel te lleva de la mano desde ahí:
 
@@ -283,7 +298,9 @@ clave compartida: si hay cuentas creadas, se ignora.
 
 Con el despliegue de Docker esto ya viene resuelto y no hace falta abrir el bind:
 el contenedor comparte la red del servidor, así que el panel escucha en loopback
-como en cualquier instalación y quien lo expone es el proxy con TLS de adelante.
+como en cualquier instalación, y quien lo expone es Caddy —que `deploy.sh` levanta
+si pusiste `PANEL_DOMINIO` en el `.env`— con su certificado y su renovación
+automática. Detrás de HTTPS, la cookie de sesión sale marcada `Secure`.
 
 ## Formatos
 
@@ -454,7 +471,7 @@ src/lib/
 Dockerfile            la imagen del servidor: Node + Chrome + ffmpeg + la CLI
 docker-compose.yml    los dos servicios del servidor: panel y ciclo diario
 deploy.sh             el redespliegue, despues de un git pull
-docker/               arranque, entrypoint y el ciclo diario del contenedor
+docker/               arranque, entrypoint, ciclo diario y el Caddyfile del proxy
 docs/deploy.md        el runbook del servidor
 CONTRACTS.md          contratos internos entre modulos
 ```

@@ -67,3 +67,32 @@ services:
     command: ["node", "--disable-warning=ExperimentalWarning", "docker/ciclo-diario.mjs"]
     depends_on:
       - panel
+
+  # El panel publicado en tu dominio, con HTTPS y certificado automatico.
+  #
+  # Solo se levanta si `PANEL_DOMINIO` tiene algo en el .env: deploy.sh activa el
+  # perfil cuando lo encuentra. Sin dominio no existe, y el panel sigue donde
+  # estaba —127.0.0.1:4317— alcanzable por tunel SSH.
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["dominio"]
+    env_file: .env
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Los certificados viven en un volumen: sin esto, cada redeploy volveria a
+      # pedirlos y Let's Encrypt corta por repetir (cinco por dominio y semana).
+      - caddy-datos:/data
+      - caddy-config:/config
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - panel
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy-datos:
+  caddy-config:

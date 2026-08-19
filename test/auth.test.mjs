@@ -275,3 +275,39 @@ test("no se puede quedar sin duenio", () => {
   assert.equal(otro.role, "owner");
   s2.close();
 });
+
+test("la cookie de sesion se marca Secure solo cuando la request llego por HTTPS", async () => {
+  const entrar = (extra = {}) =>
+    fetch(base + "/login", {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: base,
+        ...extra,
+      },
+      body: new URLSearchParams({
+        email: "joel@marca.com",
+        password: "una frase larga y facil",
+      }).toString(),
+    });
+
+  // Por http no puede ir: con el flag, el navegador deja de mandar la cookie y
+  // entrar por el tunel SSH —que es http contra 127.0.0.1— dejaria de andar.
+  const claro = await entrar();
+  assert.equal(claro.status, 303);
+  assert.ok(
+    !/;\s*Secure/i.test(claro.headers.get("set-cookie") ?? ""),
+    "sin TLS la cookie no lleva Secure",
+  );
+
+  // Detras del proxy con TLS si: sin el flag, un solo pedido en claro al mismo
+  // dominio le regala la sesion a quien mire la red.
+  const conTls = await entrar({ "x-forwarded-proto": "https" });
+  assert.equal(conTls.status, 303);
+  assert.match(
+    conTls.headers.get("set-cookie") ?? "",
+    /;\s*Secure/i,
+    "detras del proxy con TLS la cookie va marcada",
+  );
+});
