@@ -32,6 +32,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-# --- herramientas de agentes ---
-.claude/
-CLAUDE.md
+# --- configuracion local de editores y herramientas ---
+# Lo que cada quien use para trabajar es asunto suyo y no del repo.
+.agent/
+.assistant/
+AGENTS.md
+*.local.md
