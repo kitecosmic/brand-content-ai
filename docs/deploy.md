@@ -60,12 +60,17 @@ seguir:
 
 ```bash
 curl -fsSL https://get.docker.com | sh
+
+# solo si entrás con un usuario común, no como root:
 sudo usermod -aG docker "$USER"
 exit    # salí y volvé a entrar por SSH: el grupo toma efecto al iniciar sesión
 ```
 
-Al volver, `docker run --rm hello-world` tiene que andar sin `sudo`. Si el
-instalador todavía no publica paquetes para tu versión de Ubuntu, los de la
+El `usermod` es lo que deja usar Docker sin `sudo`, y el grupo recién vale al
+iniciar sesión de nuevo — por eso el `exit`. Como root no hace falta ninguno de
+los dos. Al volver, `docker run --rm hello-world` tiene que andar sin `sudo`.
+
+Si el instalador todavía no publica paquetes para tu versión de Ubuntu, los de la
 distro alcanzan: `sudo apt install -y docker.io docker-compose-v2`.
 
 **3. El proyecto y sus secretos.**

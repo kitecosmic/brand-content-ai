@@ -84,9 +84,15 @@ sudo apt install -y git
 
 # 2. Docker (el instalador oficial deja también docker compose)
 curl -fsSL https://get.docker.com | sh
+
+# solo si entrás con un usuario común, no como root:
 sudo usermod -aG docker $USER
 exit    # salí y volvé a entrar: el grupo docker toma efecto al iniciar sesión
 ```
+
+Esas dos últimas líneas le dan permiso al usuario de usar Docker sin `sudo`, y el
+`exit` está porque el grupo recién vale al iniciar sesión de nuevo. Si entrás
+como root, salteálas: ya podés.
 
 ```bash
 # 3. el proyecto
