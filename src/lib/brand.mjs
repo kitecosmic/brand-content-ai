@@ -20,6 +20,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node
 import { join } from "node:path";
 
 import { runModeloJSON } from "./modelo.mjs";
+import { renderLayout, sampleSlots } from "./layouts.mjs";
 import { buildFontCss, familyExists } from "./fonts.mjs";
 import { readSite } from "./site.mjs";
 import { META_DIR, slugify } from "./config.mjs";
@@ -544,115 +545,26 @@ Nunca: ${(brand.never ?? []).join(" / ") || "—"}
 }
 
 /**
- * La composicion de referencia: el ejemplo de FORMA que el modelo copia.
+ * La composicion de referencia: el ejemplo de FORMA que el modelo mira cuando
+ * repara una escena.
  *
  * No es una pieza de contenido — es el molde: el <template>, el #root con sus
- * data-*, las dos capas clip, los ids estables y la timeline registrada. Que
- * cada marca tenga la suya (con sus colores y su tipografia) es lo que evita
- * que todas las marcas terminen pareciendose a la primera.
+ * data-*, las dos capas clip, los ids estables y la timeline registrada. Es el
+ * layout `hero` de layouts.mjs renderizado para esta marca: lo mismo que
+ * produce el sistema al componer, asi que lo que el modelo edita en una
+ * reparacion tiene exactamente la forma que ve aca. Que cada marca tenga la
+ * suya (con sus colores y su tipografia) es lo que evita que todas las marcas
+ * terminen pareciendose a la primera.
  */
 export function renderReferenceComposition(brand) {
-  const p = brand.palette ?? {};
-  const display = brand.fonts?.display?.family ?? FALLBACK_DISPLAY;
-  const mono = brand.fonts?.mono?.family ?? FALLBACK_MONO;
-  return `<!doctype html>
-<template>
-  <style>
-    /* @@BCA_FONTS@@ */
-    #root {
-      position: absolute; inset: 0;
-      width: 1080px; height: 1080px;
-      overflow: hidden; container-type: size;
-      font-family: "${display}", sans-serif;
-      color: ${p.ink};
-      background: ${p.bg};
-    }
-    .ref-ground { position: absolute; inset: 0; background: ${p.bg}; }
-    .ref-stage  { position: absolute; inset: 0; padding: 60px; }
-    .ref-kicker {
-      position: absolute; top: 60px; left: 60px;
-      font-family: "${mono}", monospace; font-size: 15px; font-weight: 600;
-      letter-spacing: 0.14em; text-transform: uppercase; color: ${p.accent};
-    }
-    .ref-display {
-      position: absolute; left: 60px; right: 60px; top: 300px;
-      font-size: 119px; font-weight: 800; line-height: 0.9;
-      letter-spacing: -0.04em; color: ${p.ink};
-    }
-    .ref-display .hot { color: ${p.accent}; }
-    .ref-support {
-      position: absolute; left: 60px; right: 60px; top: 640px;
-      font-size: 22px; line-height: 1.5; color: ${p.muted};
-    }
-    .ref-panel {
-      position: absolute; left: 60px; right: 60px; top: 740px;
-      border: 1px solid ${p.line}; background: ${p.surface}; padding: 28px;
-      font-family: "${mono}", monospace; font-size: 18px; color: ${p.ink};
-    }
-    .ref-rule { position: absolute; left: 60px; bottom: 110px; width: 220px; height: 2px; background: ${p.accent}; }
-    .ref-foot {
-      position: absolute; left: 60px; right: 60px; bottom: 60px;
-      display: flex; justify-content: space-between;
-      font-family: "${mono}", monospace; font-size: 13px;
-      letter-spacing: 0.14em; text-transform: uppercase; color: ${p.hint};
-    }
-  </style>
-
-  <div id="root" data-composition-id="ref" data-start="0" data-duration="4"
-       data-width="1080" data-height="1080">
-    <div id="ref-ground" class="clip ref-ground" data-start="0" data-duration="4" data-track-index="0"></div>
-    <div id="ref-stage" class="clip ref-stage" data-start="0" data-duration="4" data-track-index="1">
-      <div id="ref-kicker" class="ref-kicker">${escapeHtml(brand.name)}</div>
-      <div id="ref-display" class="ref-display">el titular manda<span class="hot">.</span></div>
-      <div id="ref-support" class="ref-support">La linea de apoyo explica en una frase, sin repetir el titular.</div>
-      <div id="ref-panel" class="ref-panel">un bloque de apoyo: codigo, dato o cita</div>
-      <div id="ref-rule" class="ref-rule"></div>
-      <div id="ref-foot" class="ref-foot"><span id="ref-foot-left">${escapeHtml(brand.name)}</span><span id="ref-foot-right">01</span></div>
-    </div>
-  </div>
-
-  <script>
-    window.__timelines = window.__timelines || {};
-    (function () {
-      var tl = gsap.timeline({ paused: true });
-      gsap.set("#ref-kicker",  { opacity: 0, y: -12 });
-      gsap.set("#ref-display", { opacity: 0, y: 34 });
-      gsap.set("#ref-support", { opacity: 0, y: 18 });
-      gsap.set("#ref-panel",   { opacity: 0, y: 22 });
-      gsap.set("#ref-rule",    { opacity: 0, scaleX: 0, transformOrigin: "0% 50%" });
-      gsap.set("#ref-foot",    { opacity: 0 });
-
-      tl.to("#ref-kicker",  { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 0.05);
-      tl.to("#ref-display", { opacity: 1, y: 0, duration: 0.75, ease: "power3.out" }, 0.25);
-      tl.to("#ref-support", { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 0.70);
-      tl.to("#ref-panel",   { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 1.05);
-      tl.to("#ref-rule",    { opacity: 1, scaleX: 1, duration: 0.50, ease: "power3.out" }, 1.45);
-      tl.to("#ref-foot",    { opacity: 1, duration: 0.40, ease: "power2.out" }, 1.80);
-      // Algo sigue vivo hasta el final: una composicion congelada falla el check.
-      tl.to("#ref-rule",    { scaleX: 1.35, duration: 1.6, ease: "none" }, 2.2);
-
-      window.__timelines["ref"] = tl;
-    })();
-  </script>
-</template>
-`;
-}
-
-// ---------------------------------------------------------------------------
-// El modelo propone; el codigo valida
-// ---------------------------------------------------------------------------
-
-async function proposeIdentity(cfg, { site, current, hints, name, colors, deps }) {
-  const prompt = buildIdentityPrompt({ site, current, hints, name, colors });
-  const res = await deps.runModeloJSON(prompt, {
-    model: cfg.models?.brief ?? cfg.models?.plan,
-    timeoutMs: cfg.limits?.modelTimeoutMs,
+  return renderLayout("hero", {
+    brand,
+    width: 1080,
+    height: 1080,
+    scene: { compId: "ref", index: 0, hold: 4, duration: 4 },
+    total: 1,
+    slots: sampleSlots("hero"),
   });
-  const identity = res.data;
-  if (!identity || typeof identity !== "object") {
-    throw new BrandError("el modelo no devolvio una identidad de marca usable");
-  }
-  return { identity, costUsd: res.costUsd ?? 0 };
 }
 
 export function buildIdentityPrompt({ site, current, hints, name, colors } = {}) {
