@@ -238,6 +238,30 @@ docker compose restart panel     # reiniciar sin reconstruir
 docker compose down              # bajar todo (los datos quedan)
 ```
 
+**Si `git pull` dice "divergent branches".** Pasa cuando el historial del repo se
+reescribió (por ejemplo, para sacar algo que no tenía que estar publicado): los
+commits que tenés en el servidor ya no existen en el remoto, y git no elige por
+su cuenta entre mezclarlos o descartarlos. Como el servidor es una copia de
+despliegue y no tiene commits propios, lo que corresponde es quedarse con el
+remoto:
+
+```bash
+git status --short               # tiene que estar vacío: nada editado a mano acá
+git fetch origin
+git reset --hard origin/master
+./deploy.sh
+```
+
+`reset --hard` solo toca archivos versionados: `data/`, `content/`, `projects/` y
+el `.env` están git-ignored y quedan intactos. Conviene además dejar configurado
+
+```bash
+git config pull.ff only
+```
+
+para que la próxima vez `git pull` falle diciendo lo que pasa, en lugar de
+proponer un merge que nadie quiere en un servidor.
+
 Los reinicios por caída los maneja Docker (`restart: unless-stopped`), y el panel
 tiene healthcheck: `docker compose ps` te dice si está sano.
 
