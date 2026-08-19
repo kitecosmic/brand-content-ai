@@ -208,9 +208,35 @@ export function vistaCalendario({ cfg, brand, dias, itemsPorDia, q, hoy, total, 
 // Marcas
 // ---------------------------------------------------------------------------
 
-export function vistaMarcas({ marcas, activa, creando }) {
+/**
+ * Lo que fallo la ultima vez que se intento una tarea de fondo.
+ *
+ * Existe porque el panel lanza el trabajo y contesta enseguida: si nadie guarda
+ * el motivo, lo unico que ve quien esperaba es que no paso nada.
+ */
+export function avisoFallo(clave, fallo, volverA) {
+  if (!fallo?.msg) return "";
+  return `<div class="aviso mal">
+    <div class="entre" style="gap:12px;align-items:flex-start">
+      <div>
+        <strong>El último intento falló.</strong>
+        <div class="mini" style="margin-top:4px">${esc(fallo.msg)}</div>
+      </div>
+      <form method="post" action="/action/descartar-fallo">
+        <input type="hidden" name="clave" value="${esc(clave)}">
+        <input type="hidden" name="back" value="${esc(volverA)}">
+        <button type="submit" class="chico">Entendido</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+export function vistaMarcas({ marcas, activa, creando, fallo = null, sinModelo = false }) {
   return `<h1>Marcas</h1>
 <p class="sub">Cada marca tiene su paleta, su tipografía, su voz y sus fuentes de conocimiento. El contenido sale con esa identidad.</p>
+
+${sinModelo ? avisoSinModelo() : ""}
+${fallo ? avisoFallo("__marca", fallo, "/marcas") : ""}
 
 ${
   creando
@@ -277,9 +303,10 @@ ${
 </div>`;
 }
 
-export function vistaMarca({ brand, revisiones, fuentes, trabajando }) {
+export function vistaMarca({ brand, revisiones, fuentes, trabajando, fallos = [] }) {
   const p = brand.palette ?? {};
-  return `<div class="entre">
+  return `${fallos.map(([clave, f]) => avisoFallo(clave, f, `/marcas/${brand.id}`)).join("")}
+<div class="entre">
   <div>
     <h1>${esc(brand.name)}</h1>
     <p class="sub">${esc(brand.tagline ?? brand.audience ?? "")}</p>

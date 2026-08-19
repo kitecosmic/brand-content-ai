@@ -85,6 +85,8 @@ const LOTE_PENDIENTES = 20;
 // Marca en el kv de que alguien ya recorrio el asistente y no quiere verlo mas.
 const TOUR_VISTO = "ui:tour-visto";
 const SESION_SECRETO = "auth:session-secret";
+// Donde queda anotado el ultimo fallo de una tarea de fondo, por clave.
+const FALLO_TAREA = "ui:fallo:";
 const STALE_SECONDS = 120;
 const MAX_ANGLE = 300;
 const MAX_MESSAGE = 2000;
@@ -530,7 +532,15 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       res,
       { ...marco, cabeza: marcas.slice(0, 6).map(fuentesDeMarca).join("") },
       "Marcas",
-      vistaMarcas({ marcas, activa: brand?.id ?? "", creando }),
+      vistaMarcas({
+        marcas,
+        activa: brand?.id ?? "",
+        creando,
+        fallo: falloDeTarea("__marca"),
+        // Armar una marca es leer un sitio y proponer una identidad: sin modelo
+        // no hay forma. Decirlo antes ahorra el intento que falla.
+        sinModelo: !modeloConfigurado(loadConfig()),
+      }),
       "marcas",
     );
   }
@@ -549,6 +559,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         revisiones: store.brandRevisions(brand.id),
         fuentes: store.allKnowledge(brand.id),
         trabajando: running.has(`__marca:${brand.id}`) ? "aplicando el cambio y rearmando el proyecto" : "",
+        // Sincronizar y revisar tambien corren de fondo: sus fallos se veian
+        // igual de poco que los de crear.
+        fallos: [
+          [`__sync:${brand.id}`, falloDeTarea(`__sync:${brand.id}`)],
+          [`__marca:${brand.id}`, falloDeTarea(`__marca:${brand.id}`)],
+        ].filter(([, f]) => f),
       }),
       "marcas",
     );
@@ -880,6 +896,13 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         const entregar = params.get("entregar") === "1";
         lanzar(id, () => handlers.generate?.(id, { entregar }));
         return volver(`/item/${encodeURIComponent(id)}`, { msg: "Arrancó. Esta página se actualiza sola." });
+      }
+
+      case "descartar-fallo": {
+        const clave = String(params.get("clave") ?? "");
+        // Solo las claves de tareas: nada de borrar cualquier fila del kv.
+        if (clave.startsWith("__")) store.del(FALLO_TAREA + clave);
+        return volver(atras());
       }
 
       case "marca-nueva": {
@@ -1240,13 +1263,43 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
    * Lanza trabajo largo sin bloquear la respuesta: la pagina vuelve enseguida y
    * el avance se sigue por la base.
    */
+  /**
+   * Una tarea de fondo: crear una marca, sincronizar, generar.
+   *
+   * El fallo se guarda ademas de loguearse. Mandarlo solo a la consola del
+   * servidor hacia que, para quien mira el panel, no hubiera pasado nada: la
+   * tarjeta de "creando una marca" desaparecia y la marca no estaba, sin una
+   * palabra de por que. El motivo real —"falta la API key del modelo"— vivia en
+   * un `docker compose logs` que nadie tiene por que ir a leer.
+   */
   function lanzar(clave2, fn) {
     if (running.has(clave2)) return;
+    // Reintentar borra el fallo viejo: lo que se muestra es el ultimo, no una
+    // pila de fantasmas.
+    store.del(FALLO_TAREA + clave2);
     const p = Promise.resolve()
       .then(fn)
-      .catch((err) => log?.(`[web] ${clave2}: ${err?.message ?? err}`))
+      .catch((err) => {
+        const msg = String(err?.message ?? err);
+        log?.(`[web] ${clave2}: ${msg}`);
+        try {
+          store.set(FALLO_TAREA + clave2, JSON.stringify({ msg: msg.slice(0, 600), cuando: Date.now() }));
+        } catch {
+          /* si ni eso se puede guardar, al menos quedo en el log */
+        }
+      })
       .finally(() => running.delete(clave2));
     running.set(clave2, p);
+  }
+
+  /** El ultimo fallo de una tarea, para poder decirlo en la pantalla. */
+  function falloDeTarea(clave2) {
+    try {
+      const crudo = store.get(FALLO_TAREA + clave2);
+      return crudo ? JSON.parse(crudo) : null;
+    } catch {
+      return null;
+    }
   }
 
   // -------------------------------------------------------------------------
