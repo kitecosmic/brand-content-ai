@@ -108,7 +108,7 @@
     "jobStaleSeconds": 120,
     "$jobStaleSeconds": "Segundos sin latido para dar un trabajo por muerto. Con latido cada 20s, 120 tolera un tropiezo sin declarar muerto algo que sigue vivo.",
     "scenesPerCall": 2,
-    "$scenesPerCall": "Cuantas composiciones escribe UNA llamada de compose. Cada 'claude -p' recarga ~30k tokens de contexto y relee frame.md + reference.html: escribir 2 escenas por llamada amortiza ese costo fijo (~-20/30% del compose) y ademas baja de 6 a 3 las sesiones concurrentes. 1 = como antes.",
+    "$scenesPerCall": "Cuantas composiciones escribe UNA llamada de compose. Cada llamada recarga ~30k tokens de contexto y relee frame.md + reference.html: escribir 2 escenas por llamada amortiza ese costo fijo (~-20/30% del compose) y ademas baja de 6 a 3 las sesiones concurrentes. 1 = como antes.",
     "maxConcurrentScenes": 3,
     "$maxConcurrentScenes": "Tope de llamadas de compose en paralelo. Con el backend HTTP cada llamada es un fetch (no un proceso de 350 MB), asi que lo que se satura son los limites de la API, no la RAM: por eso este numero manda tal cual. 0 = default (3). Con scenesPerCall 2 y tope 3, un carrusel de 6 va en 3 lotes de 2 — seis en paralelo terminaron en timeouts masivos en la primera corrida real."
   },

@@ -176,7 +176,7 @@ export const DEFAULT_SCENE_CONCURRENCY = 3;
 /**
  * Cuantas escenas componer a la vez.
  *
- * Cuando cada llamada era un `claude -p` (~350 MB de RSS) el limite real era la
+ * Cuando cada llamada era un proceso aparte (~350 MB de RSS) el limite real era la
  * RAM de la maquina, y se calculaba con freemem(). Con el backend HTTP una
  * llamada es un fetch: no ocupa memoria digna de mencion y lo que se satura son
  * los limites del proveedor. Atarlo a la RAM libre solo servia para componer en

@@ -1,15 +1,17 @@
 // Wrapper del backend de lenguaje: MiniMax servido en formato Anthropic.
 //
-// Por que HTTP y no el CLI de Claude: el sistema ya no depende de la suscripcion
-// de Claude Code; habla contra <baseUrl>/messages con la cabecera
-// `anthropic-version`. Cada llamada elige su tamano (plan/brief/compose al grande,
+// Por que HTTP y no un CLI: el sistema no depende de ninguna suscripcion ni de
+// que haya un binario instalado. Habla contra <baseUrl>/messages con la cabecera
+// `anthropic-version` — ese formato es el que expone MiniMax, no una eleccion
+// nuestra. Cada llamada elige su tamano (plan/brief/compose al grande,
 // digest/repair al chico) desde cfg.models y la api key vive en cfg.secrets.
 //
-// El wrapper preserva las firmas publicas (`runClaude`, `runClaudeJSON`,
-// `extractJSON`, `ClaudeError`) para no tocar mas que lo necesario arriba. La
-// API Anthropic NO expone uso de herramientas como lo hacia `claude -p`: por eso
-// los callers inlinear los archivos que el modelo necesita via `opts.files`
-// (label -> contenido) y el wrapper los mete en el prompt antes de enviarlo.
+// El endpoint NO expone uso de herramientas: el modelo no puede abrir archivos
+// por su cuenta. Por eso los callers inlinean lo que necesita via `opts.files`
+// (label -> contenido) y el wrapper lo mete en el prompt antes de enviarlo.
+//
+// Los nombres `runClaude` / `runClaudeJSON` / `ClaudeError` son deuda heredada:
+// el backend es MiniMax. Renombrarlos esta anotado en SPEC-reparacion.md.
 
 import { loadConfig } from "./config.mjs";
 
