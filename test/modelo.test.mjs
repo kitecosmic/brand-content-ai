@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 
-import { conArchivos, runModelo, runModeloChat, runModeloJSON, extractJSON, ModeloError } from "../src/lib/modelo.mjs";
+import { conArchivos, imagenPng, runModelo, runModeloChat, runModeloJSON, sinImagenes, extractJSON, ModeloError } from "../src/lib/modelo.mjs";
 
 /**
  * Levanta un server que responde segun `handler(req, n)` donde `n` es el numero
@@ -269,6 +269,65 @@ test("un 400 que no habla de cache_control sigue siendo un error del prompt", as
       /minimax respondio 400/,
     );
     assert.equal(api.calls.length, 1);
+  } finally {
+    await api.close();
+  }
+});
+
+test("imagenPng arma el bloque de imagen y sinImagenes lo reemplaza por un marcador en el historial", async () => {
+  const png = Buffer.from("png-falso");
+  const bloque = imagenPng(png);
+  assert.deepEqual(bloque, { type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } });
+
+  const historial = [
+    { role: "user", content: [{ type: "text", text: "mira" }, bloque, { type: "text", text: "y esta" }, imagenPng(png)] },
+    { role: "assistant", content: "vi dos" },
+    { role: "user", content: "texto plano" },
+  ];
+  const limpio = sinImagenes(historial);
+  assert.deepEqual(limpio[0].content, [
+    { type: "text", text: "mira" },
+    { type: "text", text: "[image 1 was attached in this turn]" },
+    { type: "text", text: "y esta" },
+    { type: "text", text: "[image 2 was attached in this turn]" },
+  ]);
+  assert.equal(limpio[1].content, "vi dos");
+  assert.equal(limpio[2].content, "texto plano");
+  // el original no se toca
+  assert.equal(historial[0].content[1].type, "image");
+
+  // Y el mensaje con imagen viaja tal cual al endpoint.
+  const api = await fakeApi((res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(ok("vista"));
+  });
+  try {
+    await runModeloChat([{ role: "user", content: [bloque, { type: "text", text: "que ves?" }] }], { model: "MiniMax-M3", apiKey: "k", baseUrl: api.baseUrl });
+    const enviado = api.calls[0].body.messages[0].content;
+    assert.equal(enviado[0].type, "image");
+    assert.equal(enviado[0].source.data, png.toString("base64"));
+  } finally {
+    await api.close();
+  }
+});
+
+test("el fallback sin cache_control conserva las imagenes: solo saca la marca", async () => {
+  const api = await fakeApi((res, n) => {
+    if (n === 1) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ error: { message: "cache_control not supported" } }));
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(ok("ok"));
+  });
+  try {
+    const contenido = [...conArchivos("p", { "a.txt": "x" }, { cache: true }), imagenPng(Buffer.from("img"))];
+    await runModeloChat([{ role: "user", content: contenido }], { model: "MiniMax-M3", apiKey: "k", baseUrl: api.baseUrl, retries: 0 });
+    assert.equal(api.calls.length, 2);
+    const reenviado = api.calls[1].body.messages[0].content;
+    assert.ok(Array.isArray(reenviado), "sigue siendo una lista de bloques");
+    assert.ok(reenviado.every((b) => !b.cache_control));
+    assert.equal(reenviado.at(-1).type, "image");
   } finally {
     await api.close();
   }

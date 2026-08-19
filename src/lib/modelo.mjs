@@ -336,8 +336,39 @@ function tieneCacheControl(body) {
 
 function sinCacheControl(content) {
   if (!Array.isArray(content)) return content;
-  // De vuelta a un string: es lo que el endpoint seguro entiende.
-  return content.map((b) => (b && typeof b.text === "string" ? b.text : "")).join("");
+  // Solo texto: de vuelta a un string, que es lo que el endpoint seguro
+  // entiende. Con imagenes adentro se conservan los bloques, sin la marca.
+  if (content.every((b) => b && b.type === "text")) return content.map((b) => b.text ?? "").join("");
+  return content.map(({ cache_control: _c, ...b }) => b);
+}
+
+// ---------------------------------------------------------------------------
+// Imagenes
+// ---------------------------------------------------------------------------
+
+/**
+ * Un bloque de imagen PNG para el contenido de un mensaje (formato Anthropic).
+ * Acepta el Buffer del archivo o el base64 ya armado.
+ */
+export function imagenPng(datos, mediaType = "image/png") {
+  const data = Buffer.isBuffer(datos) ? datos.toString("base64") : String(datos ?? "");
+  return { type: "image", source: { type: "base64", media_type: mediaType, data } };
+}
+
+/**
+ * El historial sin sus imagenes: cada bloque de imagen se reemplaza por un
+ * marcador de texto. Una foto sirve en la vuelta en que se manda; arrastrarla
+ * en cada mensaje siguiente multiplica el prompt (decenas de KB de base64 por
+ * imagen, por vuelta) sin decirle nada nuevo al modelo, y si el historial se
+ * loguea o se guarda, el base64 tapa todo lo demas.
+ */
+export function sinImagenes(mensajes) {
+  return (mensajes ?? []).map((m) => {
+    if (!Array.isArray(m.content)) return m;
+    let n = 0;
+    const content = m.content.map((b) => (b && b.type === "image" ? { type: "text", text: `[image ${++n} was attached in this turn]` } : b));
+    return { ...m, content };
+  });
 }
 
 // ---------------------------------------------------------------------------
