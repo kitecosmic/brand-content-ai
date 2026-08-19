@@ -580,6 +580,25 @@ export class Store {
     return this.activeJobs().find((j) => j.item_id === itemId) ?? null;
   }
 
+  /**
+   * El ultimo paso que fallo en una pieza, para poder decir POR QUE se detuvo.
+   *
+   * Un trabajo que muere sin limpiar no deja nada en `items.error`: lo unico que
+   * queda es la fila de `runs` que anoto el fallo antes de que el proceso se
+   * fuera. Sin esto, el panel solo puede decir "detenido" y encogerse de hombros.
+   */
+  ultimoFallo(itemId) {
+    return (
+      this.db
+        .prepare(
+          `SELECT kind, detail, created_at,
+                  CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER) AS hace_s
+           FROM runs WHERE item_id = ? AND ok = 0 ORDER BY id DESC LIMIT 1`,
+        )
+        .get(itemId) ?? null
+    );
+  }
+
   // ---- usuarios ----------------------------------------------------------
 
   createUser({ id, email, name, passHash, role = "member" }) {

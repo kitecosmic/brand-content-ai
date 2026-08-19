@@ -18,6 +18,26 @@ export const ETIQUETA_ESTADO = {
   rejected: "rechazado",
 };
 
+/**
+ * El chip de una pieza, sabiendo si su trabajo sigue vivo.
+ *
+ * `building` en la base significa "alguien la empezó", no "alguien la está
+ * haciendo": si el proceso murió, la fila queda igual. Por eso el estado que se
+ * muestra no sale solo del status — necesita saber si hay alguien trabajando.
+ *
+ * `detenida` puede ser un booleano o el objeto de `estadoDe()`.
+ */
+export function chipDePieza(item, detenida) {
+  const muerta =
+    typeof detenida === "object" && detenida !== null
+      ? detenida.kind === "stale" || detenida.kind === "orphan"
+      : !!detenida;
+  if (item.status === "building" && muerta) {
+    return chipEstado("detenido", "detenido");
+  }
+  return chipEstado(item.status, ETIQUETA_ESTADO[item.status] ?? item.status);
+}
+
 const ETIQUETA_FASE = {
   brief: "escribiendo el brief",
   compose: "componiendo escenas",
@@ -33,12 +53,12 @@ const ETIQUETA_FASE = {
 
 /**
  * El tab que hace la promesa del producto: le pedis una pieza y la hace ahora.
- * No toca el calendario — lo que se pide aca sale con fecha de hoy y arranca.
+ * No toca el calendario — lo que se pide acá sale con fecha de hoy y arranca.
  */
-export function vistaCrear({ cfg, brand, recientes = [], enCurso = [], hayTelegram = false }) {
+export function vistaCrear({ cfg, brand, recientes = [], enCurso = [], hayTelegram = false, detenidos = new Set() }) {
   if (!brand) {
-    return `<h1>Todavia no hay ninguna marca</h1>
-    <p class="sub">${PRODUCTO} genera contenido para una marca: sus colores, su voz y sus hechos. Crea la primera y despues volve aca.</p>
+    return `<h1>Todavía no hay ninguna marca</h1>
+    <p class="sub">${PRODUCTO} genera contenido para una marca: sus colores, su voz y sus hechos. Creá la primera y después volve acá.</p>
     <a class="boton primario" href="/marcas">Crear mi primera marca</a>`;
   }
 
@@ -50,14 +70,14 @@ export function vistaCrear({ cfg, brand, recientes = [], enCurso = [], hayTelegr
   const idiomas = brand.languages?.length ? brand.languages : ["en"];
 
   return `<h1>Crear una pieza</h1>
-<p class="sub">Deci que queres comunicar. ${PRODUCTO} escribe el brief, compone y renderiza con la identidad de <strong>${esc(brand.name)}</strong>.</p>
+<p class="sub">Decí qué querés comunicar. ${PRODUCTO} escribe el brief, compone y renderiza con la identidad de <strong>${esc(brand.name)}</strong>.</p>
 
 <div class="grid dos">
   <form class="card" method="post" action="/action/crear-ahora">
     <div class="campo">
-      <label for="tema">Que queres decir</label>
+      <label for="tema">Qué querés decir</label>
       <textarea id="tema" name="tema" required placeholder="Ej: que el agente puede crear la base de datos solo, sin que toques Docker"></textarea>
-      <div class="ayuda">Una idea concreta. Si le das un dato (un numero, una feature), lo usa; si no, lo saca del conocimiento de la marca.</div>
+      <div class="ayuda">Una idea concreta. Si le das un dato (un número, una feature), lo usa; si no, lo saca del conocimiento de la marca.</div>
     </div>
     <div class="grid dos">
       <div class="campo">
@@ -94,7 +114,7 @@ export function vistaCrear({ cfg, brand, recientes = [], enCurso = [], hayTelegr
                .map(
                  (j) => `<div style="margin:10px 0">
                    <a href="/item/${esc(j.item_id)}">${esc(j.angle ?? j.item_id)}</a>
-                   <div class="mini dim">${esc(ETIQUETA_FASE[String(j.phase ?? "").split(" ")[0]] ?? j.phase ?? "trabajando")} · hace ${esc(j.silent_s ?? 0)}s del ultimo latido</div>
+                   <div class="mini dim">${esc(ETIQUETA_FASE[String(j.phase ?? "").split(" ")[0]] ?? j.phase ?? "trabajando")} · hace ${esc(j.silent_s ?? 0)}s del último latido</div>
                    <div class="barra" style="margin-top:6px"><i></i></div>
                  </div>`,
                )
@@ -103,7 +123,7 @@ export function vistaCrear({ cfg, brand, recientes = [], enCurso = [], hayTelegr
         : ""
     }
     <div class="card">
-      <h3>Lo ultimo que hiciste</h3>
+      <h3>Lo último que hiciste</h3>
       ${
         recientes.length
           ? `<table><tbody>${recientes
@@ -111,11 +131,11 @@ export function vistaCrear({ cfg, brand, recientes = [], enCurso = [], hayTelegr
                 (i) => `<tr>
                   <td style="width:1%"><span class="mini faint mono">${esc(i.format)}</span></td>
                   <td><a href="/item/${esc(i.id)}">${esc(recorte(i.angle, 60))}</a></td>
-                  <td style="width:1%">${chipEstado(i.status, ETIQUETA_ESTADO[i.status] ?? i.status)}</td>
+                  <td style="width:1%">${chipDePieza(i, detenidos.has(i.id))}</td>
                 </tr>`,
               )
               .join("")}</tbody></table>`
-          : `<p class="dim mini">Nada todavia. Lo que crees aca aparece en esta lista.</p>`
+          : `<p class="dim mini">Nada todavía. Lo que crees acá aparece en esta lista.</p>`
       }
     </div>
   </div>
@@ -126,9 +146,9 @@ export function vistaCrear({ cfg, brand, recientes = [], enCurso = [], hayTelegr
 // Calendario
 // ---------------------------------------------------------------------------
 
-export function vistaCalendario({ cfg, brand, dias, itemsPorDia, q, hoy, total, pendientes = 0 }) {
+export function vistaCalendario({ cfg, brand, dias, itemsPorDia, q, hoy, total, pendientes = 0, detenidos = new Set() }) {
   if (!brand) {
-    return `<h1>Calendario</h1><p class="sub">Crea una marca para empezar a planificar.</p>
+    return `<h1>Calendario</h1><p class="sub">Creá una marca para empezar a planificar.</p>
       <a class="boton primario" href="/marcas">Ir a marcas</a>`;
   }
   const cabecera = DOW.map((d) => `<div class="dow">${d}</div>`).join("");
@@ -143,7 +163,7 @@ export function vistaCalendario({ cfg, brand, dias, itemsPorDia, q, hoy, total, 
             (i) => `<a class="pieza" href="/item/${esc(i.id)}" title="${esc(i.angle)}">
               <span class="fmt">${esc(i.format)}${i.language ? ` · ${esc(i.language)}` : ""}</span><br>
               ${esc(recorte(i.angle, 46))}
-              <div style="margin-top:4px">${chipEstado(i.status, ETIQUETA_ESTADO[i.status] ?? i.status)}</div>
+              <div style="margin-top:4px">${chipDePieza(i, detenidos.has(i.id))}</div>
             </a>`,
           )
           .join("")}
@@ -157,9 +177,9 @@ export function vistaCalendario({ cfg, brand, dias, itemsPorDia, q, hoy, total, 
     <p class="sub">${total} pieza(s) entre ${esc(humano(q.from))} y ${esc(humano(dias[dias.length - 1]))}</p>
   </div>
   <div class="fila">
-    <a class="boton" href="/confirmar/plan?dias=14" title="Propone angulos para las proximas dos semanas y los agenda. No genera nada.">Planificar 14 dias</a>
+    <a class="boton" href="/confirmar/plan?dias=14" title="Propone ángulos para las próximas dos semanas y los agenda. No genera nada.">Planificar 14 días</a>
     <a class="boton${pendientes ? " primario" : ""}" href="/confirmar/generar"
-       title="${pendientes ? `Genera las ${pendientes} piezas pendientes de esta marca. Te muestra el costo antes de arrancar.` : "No hay piezas pendientes en este rango"}">
+       title="${pendientes ? `Genera las ${pendientes} piezas pendientes de esta marca. Te muestra el costó antes de arrancar.` : "No hay piezas pendientes en este rango"}">
       Generar lo pendiente${pendientes ? ` <span class="chip">${pendientes}</span>` : ""}
     </a>
     <a class="boton" href="/nuevo" title="Agrega una pieza al calendario con la fecha que elijas">+ Agendar</a>
@@ -168,7 +188,7 @@ export function vistaCalendario({ cfg, brand, dias, itemsPorDia, q, hoy, total, 
 
 <form method="get" action="/calendario" class="card fila" style="margin-bottom:16px">
   <div><label for="from">Desde</label><input type="date" id="from" name="from" value="${esc(q.from)}"></div>
-  <div><label for="days">Dias</label>
+  <div><label for="days">Días</label>
     <select id="days" name="days">${[7, 14, 30, 60].map((d) => `<option value="${d}"${d === q.days ? " selected" : ""}>${d}</option>`).join("")}</select>
   </div>
   <div><label for="status">Estado</label>
@@ -189,13 +209,13 @@ export function vistaCalendario({ cfg, brand, dias, itemsPorDia, q, hoy, total, 
 
 export function vistaMarcas({ marcas, activa, creando }) {
   return `<h1>Marcas</h1>
-<p class="sub">Cada marca tiene su paleta, su tipografia, su voz y sus fuentes de conocimiento. El contenido sale con esa identidad.</p>
+<p class="sub">Cada marca tiene su paleta, su tipografía, su voz y sus fuentes de conocimiento. El contenido sale con esa identidad.</p>
 
 ${
   creando
     ? `<div class="card" data-vivo="/api/marcas"><h3><span class="vivo"></span> Creando una marca</h3>
        <p class="mini dim">${esc(creando)}</p><div class="barra"><i></i></div>
-       <p class="mini faint">Tarda un minuto: se lee el sitio, se propone la identidad y se bajan las tipografias.
+       <p class="mini faint">Tarda un minuto: se lee el sitio, se propone la identidad y se bajan las tipografías.
        Esta pagina se actualiza sola cuando termina.</p></div>`
     : ""
 }
@@ -227,7 +247,7 @@ ${
       </div>`,
             )
             .join("")
-        : `<div class="card"><p class="dim">Todavia no hay marcas.</p></div>`
+        : `<div class="card"><p class="dim">Todavía no hay marcas.</p></div>`
     }
   </div>
 
@@ -248,10 +268,10 @@ ${
       <div class="ayuda">Si los pones, mandan sobre los del sitio.</div>
     </div>
     <div class="campo">
-      <label for="notas">Como queres que se sienta</label>
-      <textarea id="notas" name="notas" placeholder="Ej: tecnica y directa, publico developer, nada de lenguaje corporativo"></textarea>
+      <label for="notas">Cómo querés que se sienta</label>
+      <textarea id="notas" name="notas" placeholder="Ej: técnica y directa, público developer, nada de lenguaje corporativo"></textarea>
     </div>
-    <button class="primario" type="submit" data-esperando="creando..." title="Lee el sitio, propone la identidad y baja las tipografias. Tarda cerca de un minuto.">Crear marca</button>
+    <button class="primario" type="submit" data-esperando="creando..." title="Lee el sitio, propone la identidad y baja las tipografías. Tarda cerca de un minuto.">Crear marca</button>
   </form>
 </div>`;
 }
@@ -282,7 +302,7 @@ ${
     <div class="pie">
       ${swatches(p)}
       <div class="mini faint" style="margin-top:8px">
-        ${esc(brand.fonts?.display?.family ?? "—")} · ${esc(brand.fonts?.mono?.family ?? "—")} · revision ${esc(brand.revision ?? 0)}
+        ${esc(brand.fonts?.display?.family ?? "—")} · ${esc(brand.fonts?.mono?.family ?? "—")} · revisión ${esc(brand.revision ?? 0)}
       </div>
     </div>
   </div>
@@ -290,11 +310,11 @@ ${
   <form class="card" method="post" action="/action/marca-revisar">
     <input type="hidden" name="brand" value="${esc(brand.id)}">
     <h3>Cambiar algo</h3>
-    <p class="mini dim">Deci que no te gusta y se ajusta. La version anterior queda guardada.</p>
+    <p class="mini dim">Decí qué no te gusta y se ajusta. La versión anterior queda guardada.</p>
     <div class="campo">
-      <textarea name="feedback" required placeholder="Ej: mas oscuro, el acento en violeta, la tipografia con menos personalidad"></textarea>
+      <textarea name="feedback" required placeholder="Ej: más oscuro, el acento en violeta, la tipografía con menos personalidad"></textarea>
     </div>
-    <button class="primario" type="submit" data-esperando="ajustando..." title="Ajusta la identidad y guarda la version anterior como revision">Aplicar cambio</button>
+    <button class="primario" type="submit" data-esperando="ajustando..." title="Ajusta la identidad y guarda la versión anterior como revision">Aplicar cambio</button>
   </form>
 </div>
 
@@ -302,7 +322,7 @@ ${
 <div class="card">
   <div class="grid dos">
     <div>
-      <h3>Publico</h3><p class="mini">${esc(brand.audience ?? "—")}</p>
+      <h3>Público</h3><p class="mini">${esc(brand.audience ?? "—")}</p>
       <h3>Voz</h3><p class="mini">${esc(brand.voice ?? "—")}</p>
     </div>
     <div>
@@ -366,7 +386,7 @@ ${
     : ""
 }
 
-<h2>Sistema de diseno</h2>
+<h2>Sistema de diseño</h2>
 <details class="card"><summary class="mini dim">frame.md — lo que lee el modelo al componer</summary>
 <pre class="bloque mono" style="margin-top:12px">${esc(brand.frameMd ?? "(sin frame.md)")}</pre>
 </details>`;
@@ -376,16 +396,20 @@ ${
 // Pieza
 // ---------------------------------------------------------------------------
 
-export function vistaItem({ item, brand, estado, media, cfg, hayTelegram = false }) {
+export function vistaItem({ item, brand, estado, media, cfg, hayTelegram = false, fallo = null, previa = null }) {
   const generando = estado.kind === "running";
+  // Quedo en `building` pero no hay nadie generandola: el proceso murio (stale)
+  // o se fue sin dejar rastro del trabajo (orphan). Decir "generando" ahi es
+  // hacer esperar a alguien por algo que no va a pasar nunca.
+  const detenido = estado.kind === "stale" || estado.kind === "orphan";
   return `<div class="entre">
   <div>
     <h1>${esc(item.angle)}</h1>
     <p class="sub">
-      ${chipEstado(item.status, ETIQUETA_ESTADO[item.status] ?? item.status)}
+      ${chipDePieza(item, estado)}
       · ${esc(item.format)} · ${esc(item.language)} · ${esc(item.scheduled_for)}
       ${brand ? `· <a href="/marcas/${esc(brand.id)}">${esc(brand.name)}</a>` : ""}
-      ${item.revision ? `· revision ${esc(item.revision)}` : ""}
+      ${item.revision ? `· revisión ${esc(item.revision)}` : ""}
     </p>
   </div>
   <a class="boton chico" href="/calendario">Volver</a>
@@ -396,11 +420,12 @@ ${
     ? `<div class="card" data-vivo="/api/estado/${esc(item.id)}">
         <h3><span class="vivo"></span> <span data-campo="faseTexto">${esc(faseTexto(estado.job))}</span></h3>
         <div class="barra"><i></i></div>
-        <p class="mini faint">Tarda minutos. Esta pagina se actualiza sola.</p>
+        <p class="mini faint">Tarda minutos. Esta página se actualiza sola.</p>
       </div>`
     : ""
 }
-${item.error ? `<div class="aviso mal"><strong>Ultimo intento:</strong> ${esc(item.error)}</div>` : ""}
+${detenido ? bloqueDetenido({ item, estado, fallo }) : ""}
+${item.error ? `<div class="aviso mal"><strong>Último intento:</strong> ${esc(item.error)}</div>` : ""}
 
 <div class="grid dos">
   <div>
@@ -408,7 +433,7 @@ ${item.error ? `<div class="aviso mal"><strong>Ultimo intento:</strong> ${esc(it
   </div>
   <div>
     <div class="card">
-      <h3>Que tiene que comunicar</h3>
+      <h3>Qué tiene que comunicar</h3>
       <p class="mini">${esc(item.message)}</p>
     </div>
     <div class="card">
@@ -417,16 +442,16 @@ ${item.error ? `<div class="aviso mal"><strong>Ultimo intento:</strong> ${esc(it
         <form method="post" action="/action/generar"><input type="hidden" name="id" value="${esc(item.id)}"><button type="submit" data-esperando="arrancando..." title="${generando ? "Ya se esta generando" : item.status === "planned" ? "Escribe el brief, compone y renderiza esta pieza" : "Vuelve a generarla desde cero con el mismo brief"}"${generando ? " disabled" : ""}>${item.status === "planned" ? "Generar" : "Regenerar"}</button></form>
         ${
           hayTelegram
-            ? `<form method="post" action="/action/entregar"><input type="hidden" name="id" value="${esc(item.id)}"><button type="submit" title="${item.asset_path ? "Envia el archivo al chat configurado" : "Todavia no hay archivo que mandar"}"${item.asset_path ? "" : " disabled"}>Mandar a Telegram</button></form>`
+            ? `<form method="post" action="/action/entregar"><input type="hidden" name="id" value="${esc(item.id)}"><button type="submit" title="${item.asset_path ? "Envia el archivo al chat configurado" : "Todavía no hay archivo que mandar"}"${item.asset_path ? "" : " disabled"}>Mandar a Telegram</button></form>`
             : ""
         }
         <form method="post" action="/action/aprobar"><input type="hidden" name="id" value="${esc(item.id)}"><button type="submit" title="La marca como buena. No genera ni envia nada.">Aprobar</button></form>
       </div>
       <form method="post" action="/action/rechazar" style="margin-top:14px">
         <input type="hidden" name="id" value="${esc(item.id)}">
-        <label for="reason">Que esta mal</label>
-        <textarea id="reason" name="reason" required placeholder="Ej: el titular suena a folleto; quiero el numero de la latencia"></textarea>
-        <button class="primario" type="submit" data-esperando="regenerando..." title="Descarta esta version y genera otra teniendo en cuenta lo que escribiste. Vuelve a costar lo que costo generarla.">Rechazar y rehacer</button>
+        <label for="reason">Qué está mal</label>
+        <textarea id="reason" name="reason" required placeholder="Ej: el titular suena a folleto; quiero el número de la latencia"></textarea>
+        <button class="primario" type="submit" data-esperando="regenerando..." title="Descarta esta versión y genera otra teniendo en cuenta lo que escribiste. Vuelve a costar lo que costó generarla.">Rechazar y rehacer</button>
       </form>
     </div>
     <div class="card">
@@ -439,7 +464,7 @@ ${item.error ? `<div class="aviso mal"><strong>Ultimo intento:</strong> ${esc(it
             <select name="language">${(brand?.languages ?? [item.language]).map((l) => `<option value="${esc(l)}"${l === item.language ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>
           </div>
         </div>
-        <div class="campo"><label>Angulo</label><input type="text" name="angle" value="${esc(item.angle)}"></div>
+        <div class="campo"><label>Ángulo</label><input type="text" name="angle" value="${esc(item.angle)}"></div>
         <div class="campo"><label>Mensaje</label><textarea name="message">${esc(item.message)}</textarea></div>
         <div class="fila entre">
           <button type="submit">Guardar</button>
@@ -458,9 +483,60 @@ ${
 }`;
 }
 
+/**
+ * El cartel de "esto no está corriendo".
+ *
+ * Existe porque la pieza que quedó a medias se veía igual que una que está
+ * trabajando: el chip decía "generando" y la única diferencia era la ausencia
+ * de la barra de progreso — una señal que hay que saber leer. Acá se dice con
+ * todas las letras, con desde cuándo, dónde murió y qué hacer.
+ */
+function bloqueDetenido({ item, estado, fallo }) {
+  const job = estado.job;
+  const fase = job ? (ETIQUETA_FASE[String(job.phase ?? "").split(" ")[0]] ?? job.phase) : null;
+  const hace = job?.silent_s ?? fallo?.hace_s ?? null;
+
+  return `<div class="aviso mal">
+  <div class="entre" style="gap:10px">
+    <div>
+      <strong>Esto no se está generando: se detuvo.</strong>
+      <div class="mini" style="margin-top:4px">
+        ${
+          job
+            ? `El proceso que la generaba (pid ${esc(job.pid)}) dejó de responder${hace != null ? ` hace ${esc(lapso(hace))}` : ""}${fase ? `, en la fase de <strong>${esc(fase)}</strong>` : ""}.`
+            : `Quedó marcada como "generando" pero no hay ningún trabajo asociado: el proceso se fue sin poder limpiar.`
+        }
+        No hay nada esperándote: para seguir, hay que volver a arrancarla.
+      </div>
+      ${
+        fallo?.detail
+          ? `<div class="mini" style="margin-top:8px">Lo último que falló fue <code>${esc(fallo.kind)}</code>:
+               <span class="mono">${esc(recorte(fallo.detail, 180))}</span></div>`
+          : ""
+      }
+    </div>
+    <form method="post" action="/action/generar">
+      <input type="hidden" name="id" value="${esc(item.id)}">
+      <button class="primario" type="submit" data-esperando="arrancando..."
+              title="Vuelve a generarla desde el brief. Lo que ya estaba compuesto se reaprovecha.">Retomar</button>
+    </form>
+  </div>
+</div>`;
+}
+
+/** Un lapso en segundos, dicho como lo diría una persona. */
+function lapso(segundos) {
+  const s = Number(segundos) || 0;
+  if (s < 90) return `${Math.max(1, Math.round(s))} s`;
+  const min = Math.round(s / 60);
+  if (min < 90) return `${min} min`;
+  const h = Math.round(min / 60);
+  return h < 36 ? `${h} h` : `${Math.round(h / 24)} dias`;
+}
+
 export function vistaCostos({ filas, dias, total }) {
   return `<h1>Costos</h1>
-<p class="sub">Ultimos ${dias} dias. Se calcula con los precios de <code>brand-content-ai.config.json</code> a partir de los tokens que devuelve la API.</p>
+<p class="sub">Últimos ${dias} días. Se calcula con los precios de <code>brand-content-ai.config.json</code> a partir de los tokens que devuelve la API.</p>
 <div class="card">
   <table>
     <thead><tr><th>Operacion</th><th>Llamadas</th><th style="text-align:right">USD</th></tr></thead>
@@ -479,7 +555,7 @@ export function vistaCostos({ filas, dias, total }) {
 /**
  * Ajustes. Es la primera pantalla que ve alguien que acaba de clonar el repo:
  * sin API key no se genera nada, y pedirle que edite un .env por SSH es la
- * forma mas rapida de que abandone.
+ * forma mas rápida de que abandone.
  */
 export function vistaAjustes({ campos, grupos, pruebas = {}, hayEnv }) {
   const estado = (c) => {
@@ -498,7 +574,7 @@ export function vistaAjustes({ campos, grupos, pruebas = {}, hayEnv }) {
         <div style="padding-top:9px">${estado(c)}</div>
       </div>
       <div class="ayuda">${esc(c.ayuda ?? "")}${
-        c.pisandoEnv ? ` <strong class="warn">Ojo: tambien esta en el .env con otro valor; manda este.</strong>` : ""
+        c.pisandoEnv ? ` <strong class="warn">Ojo: también esta en el .env con otro valor; manda este.</strong>` : ""
       }</div>
     </div>`;
 
@@ -507,7 +583,7 @@ export function vistaAjustes({ campos, grupos, pruebas = {}, hayEnv }) {
   const gruposVisibles = grupos.filter((g) => normales.some((c) => c.grupo === g.id));
 
   return `<h1>Ajustes</h1>
-<p class="sub">Lo que pongas aca se guarda en la base y manda sobre el <code>.env</code>. Se aplica al instante: no hace falta reiniciar.</p>
+<p class="sub">Lo que pongas acá se guarda en la base y manda sobre el <code>.env</code>. Se aplica al instante: no hace falta reiniciar.</p>
 
 ${pruebas.msg ? `<div class="aviso ${pruebas.ok ? "bien" : "mal"}">${esc(pruebas.msg)}</div>` : ""}
 
@@ -552,18 +628,18 @@ ${gruposVisibles
 
   <div class="fila" style="margin-top:20px">
     <button class="primario" type="submit" data-esperando="guardando...">Guardar</button>
-    <span class="mini faint">Un campo vacio se deja como esta. Para borrar un valor, escribi <code>-</code>.</span>
+    <span class="mini faint">Un campo vacío se deja como está. Para borrar un valor, escribi <code>-</code>.</span>
   </div>
 </form>
 
 ${
   hayEnv
-    ? `<p class="mini faint" style="margin-top:24px">Tambien podes definirlos en <code>.env</code> (util para deploys automatizados). Lo de esta pantalla tiene prioridad.</p>`
+    ? `<p class="mini faint" style="margin-top:24px">También podes definirlos en <code>.env</code> (util para deploys automatizados). Lo de esta pantalla tiene prioridad.</p>`
     : ""
 }`;
 }
 
-/** Cartel de "falta lo minimo para trabajar", con el link para resolverlo. */
+/** Cartel de "falta lo mínimo para trabajar", con el link para resolverlo. */
 export function avisoSinModelo() {
   return `<div class="aviso mal">
     <strong>Falta la API key del modelo.</strong> Sin eso ${PRODUCTO} no puede escribir ni componer nada.
@@ -572,10 +648,10 @@ export function avisoSinModelo() {
 }
 
 /**
- * Contrasena y confirmacion, con boton para verla.
+ * Contraseña y confirmacion, con boton para verla.
  *
- * Dos campos porque no hay recuperacion por email: una contrasena mal tipeada
- * al crear la cuenta deja a alguien afuera de su propia instalacion. El boton
+ * Dos campos porque no hay recuperacion por email: una contraseña mal tipeada
+ * al crear la cuenta deja a alguien afuera de su propia instalación. El boton
  * de ver existe por lo mismo — es mejor mirarla que adivinar por que no entra.
  * La comparacion se hace en el navegador (aviso inmediato) y otra vez en el
  * server, que es la que vale.
@@ -583,7 +659,7 @@ export function avisoSinModelo() {
 function camposPassword({ ayuda = "" } = {}) {
   return `<div class="campo">
     <div class="entre" style="margin-bottom:6px">
-      <label for="password" style="margin:0">Contrasena</label>
+      <label for="password" style="margin:0">Contraseña</label>
       <button type="button" class="chico" data-ver="password,password2" data-libre="1" style="padding:2px 8px;font-size:12px">ver</button>
     </div>
     <input type="password" id="password" name="password" required autocomplete="new-password">
@@ -592,67 +668,72 @@ function camposPassword({ ayuda = "" } = {}) {
   <div class="campo">
     <label for="password2">Repetila</label>
     <input type="password" id="password2" name="password2" required autocomplete="new-password"
-           data-igual-que="password" data-error="las dos contrasenas tienen que ser iguales">
+           data-igual-que="password" data-error="las dos contraseñas tienen que ser iguales">
     <div class="ayuda" data-aviso-de="password2"></div>
   </div>`;
 }
 
 /**
  * Primera corrida: no hay nadie todavia. Es la unica pantalla que se puede ver
- * sin cuenta, y crea al duenio.
+ * sin cuenta, y crea al dueño.
  */
 export function vistaSetup({ error, valores = {} } = {}) {
-  return `<div style="max-width:460px;margin:8vh auto">
-  <div class="card">
-    <h1>Crear tu cuenta</h1>
-    <p class="sub">Es la primera vez que se abre este panel. La cuenta que crees ahora es la duena: puede invitar al equipo y tocar los ajustes.</p>
-    ${error ? `<div class="aviso mal">${esc(error)}</div>` : ""}
-    <form method="post" action="/setup">
-      <div class="campo">
-        <label for="name">Tu nombre</label>
-        <input type="text" id="name" name="name" value="${esc(valores.name ?? "")}" placeholder="Como te ve el equipo" autofocus>
-      </div>
-      <div class="campo">
-        <label for="email">Email</label>
-        <input type="text" id="email" name="email" value="${esc(valores.email ?? "")}" placeholder="vos@tumarca.com" required>
-      </div>
-      ${camposPassword({ ayuda: "Minimo 10 caracteres. Una frase que recuerdes sirve mejor que un jeroglifico." })}
-      <button class="primario" type="submit" style="width:100%">Crear cuenta y empezar</button>
-    </form>
-    <p class="mini faint" style="margin-top:16px">Se guarda en la base de este servidor, con la contrasena hasheada. No sale de aca.</p>
+  return `<div class="portada">
+  <div class="portada-marca">
+    <span class="portada-punto"></span>
+    <h1 class="portada-titulo">Crear tu cuenta</h1>
   </div>
+  <p class="portada-linea">Es la primera vez que se abre este panel. La cuenta que crees ahora es la dueña: puede invitar al equipo y tocar los ajustes.</p>
+  ${error ? `<div class="aviso mal">${esc(error)}</div>` : ""}
+  <form method="post" action="/setup" class="portada-form">
+    <div class="campo">
+      <label for="name">Tu nombre</label>
+      <input type="text" id="name" name="name" value="${esc(valores.name ?? "")}" placeholder="Como te ve el equipo" autofocus autocomplete="name">
+    </div>
+    <div class="campo">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" value="${esc(valores.email ?? "")}" placeholder="vos@tumarca.com" required autocomplete="username">
+    </div>
+    ${camposPassword({ ayuda: "Mínimo 10 caracteres. Una frase que recuerdes sirve mejor que un jeroglífico." })}
+    <button class="primario" type="submit" style="width:100%;margin-top:4px">Crear cuenta y empezar</button>
+  </form>
+  <p class="portada-pie">Se guarda en la base de este servidor, con la contraseña hasheada. No sale de acá.</p>
 </div>`;
 }
 
-/** Alta desde un link de invitacion. */
+/** Alta desde un link de invitación. */
 export function vistaInvitacion({ invite, error, motivo, valores = {} } = {}) {
   if (!invite) {
-    return `<div style="max-width:460px;margin:12vh auto"><div class="card">
-      <h1>Invitacion no valida</h1>
-      <p class="sub">${esc(motivo ?? "el link no sirve")}</p>
-      <a class="boton" href="/login">Ir al login</a>
-    </div></div>`;
-  }
-  return `<div style="max-width:460px;margin:8vh auto">
-  <div class="card">
-    <h1>Sumate al equipo</h1>
-    <p class="sub">Te invitaron a este panel${invite.email ? ` como <strong>${esc(invite.email)}</strong>` : ""}. Elegi una contrasena y entras.</p>
-    ${error ? `<div class="aviso mal">${esc(error)}</div>` : ""}
-    <form method="post" action="/invitacion/${esc(invite.token)}">
-      <div class="campo">
-        <label for="name">Tu nombre</label>
-        <input type="text" id="name" name="name" value="${esc(valores.name ?? "")}" autofocus>
+    return `<div class="portada">
+      <div class="portada-marca">
+        <span class="portada-punto"></span>
+        <h1 class="portada-titulo">Invitación no válida</h1>
       </div>
-      ${
-        invite.email
-          ? `<input type="hidden" name="email" value="${esc(invite.email)}">`
-          : `<div class="campo"><label for="email">Email</label>
-               <input type="text" id="email" name="email" value="${esc(valores.email ?? "")}" required></div>`
-      }
-      ${camposPassword({ ayuda: "Minimo 10 caracteres." })}
-      <button class="primario" type="submit" style="width:100%">Entrar</button>
-    </form>
+      <p class="portada-linea">${esc(motivo ?? "el link no sirve")}</p>
+      <a class="boton" href="/login">Ir a la entrada</a>
+    </div>`;
+  }
+  return `<div class="portada">
+  <div class="portada-marca">
+    <span class="portada-punto"></span>
+    <h1 class="portada-titulo">Sumate al equipo</h1>
   </div>
+  <p class="portada-linea">Te invitaron a este panel${invite.email ? ` como <strong>${esc(invite.email)}</strong>` : ""}. Elegí una contraseña y entrás.</p>
+  ${error ? `<div class="aviso mal">${esc(error)}</div>` : ""}
+  <form method="post" action="/invitacion/${esc(invite.token)}" class="portada-form">
+    <div class="campo">
+      <label for="name">Tu nombre</label>
+      <input type="text" id="name" name="name" value="${esc(valores.name ?? "")}" autofocus autocomplete="name">
+    </div>
+    ${
+      invite.email
+        ? `<input type="hidden" name="email" value="${esc(invite.email)}">`
+        : `<div class="campo"><label for="email">Email</label>
+             <input type="email" id="email" name="email" value="${esc(valores.email ?? "")}" required autocomplete="username"></div>`
+    }
+    ${camposPassword({ ayuda: "Mínimo 10 caracteres." })}
+    <button class="primario" type="submit" style="width:100%;margin-top:4px">Entrar</button>
+  </form>
 </div>`;
 }
 
@@ -660,12 +741,12 @@ export function vistaInvitacion({ invite, error, motivo, valores = {} } = {}) {
 export function vistaEquipo({ usuarios, invitaciones, yo, base, nuevoLink }) {
   const puede = yo.role === "owner";
   return `<h1>Equipo</h1>
-<p class="sub">Quien puede entrar. Todos ven las mismas marcas y pueden generar y descargar contenido; solo el duenio invita, saca gente y toca los ajustes.</p>
+<p class="sub">Quien puede entrar. Todos ven las mismas marcas y pueden generar y descargar contenido; solo el dueño invita, saca gente y toca los ajustes.</p>
 
 ${
   nuevoLink
     ? `<div class="aviso bien">
-         <strong>Invitacion lista.</strong> Pasale este link a la persona: vence en 7 dias y sirve una sola vez.
+         <strong>Invitación lista.</strong> Pasale este link a la persona: vence en 7 días y sirve una sola vez.
          <div class="fila" style="margin-top:8px">
            <input type="text" readonly value="${esc(nuevoLink)}" onclick="this.select()" style="flex:1;min-width:280px">
          </div>
@@ -675,14 +756,14 @@ ${
 
 <div class="card">
   <table>
-    <thead><tr><th>Persona</th><th>Rol</th><th>Ultimo ingreso</th><th></th></tr></thead>
+    <thead><tr><th>Persona</th><th>Rol</th><th>Último ingreso</th><th></th></tr></thead>
     <tbody>
       ${usuarios
         .map(
           (u) => `<tr>
             <td><strong>${esc(u.name || u.email)}</strong>${u.id === yo.id ? " <span class=\"chip\">vos</span>" : ""}
                 <div class="mini faint">${esc(u.email)}</div></td>
-            <td>${u.role === "owner" ? "<span class=\"chip built\">duenio</span>" : "<span class=\"chip\">miembro</span>"}</td>
+            <td>${u.role === "owner" ? "<span class=\"chip built\">dueño</span>" : "<span class=\"chip\">miembro</span>"}</td>
             <td class="mini faint">${esc(String(u.last_login ?? "nunca").slice(0, 16))}</td>
             <td style="width:1%">${
               puede && u.id !== yo.id
@@ -706,9 +787,9 @@ ${
          <input type="text" name="email" placeholder="email de la persona (opcional)" style="flex:1;min-width:240px">
          <select name="role" style="width:auto">
            <option value="member">miembro</option>
-           <option value="owner">duenio</option>
+           <option value="owner">dueño</option>
          </select>
-         <button class="primario" type="submit" title="Crea un link de un solo uso que vence en 7 dias">Generar link</button>
+         <button class="primario" type="submit" title="Crea un link de un solo uso que vence en 7 días">Generar link</button>
        </form>
        ${
          invitaciones.length
@@ -739,8 +820,8 @@ ${
     <div class="campo"><label>Email</label><input type="text" value="${esc(yo.email)}" disabled></div>
   </div>
   <div class="grid dos">
-    <div class="campo"><label>Contrasena nueva</label><input type="password" name="password" placeholder="vacio = no la cambies"></div>
-    <div class="campo"><label>Contrasena actual</label><input type="password" name="actual" placeholder="hace falta para cambiarla"></div>
+    <div class="campo"><label>Contraseña nueva</label><input type="password" name="password" placeholder="vacío = no la cambies"></div>
+    <div class="campo"><label>Contraseña actual</label><input type="password" name="actual" placeholder="hace falta para cambiarla"></div>
   </div>
   <button type="submit">Guardar</button>
 </form>`;
@@ -749,11 +830,11 @@ ${
 /**
  * El tour, como asistente: una tarjeta a la vez.
  *
- * La primera version mostraba los cuatro pasos apilados con sus formularios
- * abiertos y era un muro. Aca se ve UNA cosa, se hace, y se pasa a la
+ * La primera versión mostraba los cuatro pasos apilados con sus formularios
+ * abiertos y era un muro. Acá se ve UNA cosa, se hace, y se pasa a la
  * siguiente — que es como se lee algo que no conoces.
  *
- * El estado de cada paso se calcula del sistema real, asi que el asistente se
+ * El estado de cada paso se calcula del sistema real, así que el asistente se
  * puede recorrer de nuevo cuando quieras: los pasos ya hechos se ven hechos.
  */
 export function vistaEmpezar({ pasos, indice, brand }) {
@@ -775,7 +856,7 @@ export function vistaEmpezar({ pasos, indice, brand }) {
   <p class="mini faint" style="text-align:center;margin-bottom:18px">paso ${n + 1} de ${total}</p>
 
   <div class="card" style="padding:28px">
-    ${paso.hecho ? '<span class="chip built" style="margin-bottom:12px">ya esta listo</span>' : ""}
+    ${paso.hecho ? '<span class="chip built" style="margin-bottom:12px">ya está listo</span>' : ""}
     <h1 style="font-size:24px;margin-bottom:10px">${esc(paso.titulo)}</h1>
     <div class="sub" style="margin-bottom:20px">${paso.detalle}</div>
 
@@ -802,32 +883,54 @@ export function vistaEmpezar({ pasos, indice, brand }) {
 </div>`;
 }
 
+/**
+ * La entrada.
+ *
+ * Es la única pantalla del panel donde todavía no hay marca, así que no tiene
+ * nada que mostrar salvo su propio nombre: el trabajo lo hacen la tipografía,
+ * el aire y una sola columna angosta. Sin tarjeta flotando en el medio de la
+ * nada — el formulario se apoya en la página, que es lo que hace que se lea
+ * como una puerta y no como un cuadro de diálogo.
+ */
 export function vistaLogin({ error, email = "", modoClave = false } = {}) {
-  return `<div style="max-width:400px;margin:13vh auto">
-  <div class="card">
-    <h1>${esc(PRODUCTO)}</h1>
-    <p class="sub">${modoClave ? "Entra con la clave del panel." : "Entra con tu cuenta."}</p>
-    ${error ? `<div class="aviso mal">${esc(error)}</div>` : ""}
-    <form method="post" action="/login">
-      ${
-        modoClave
-          ? `<div class="campo">
-               <label for="clave">Clave</label>
-               <input type="password" id="clave" name="clave" autofocus required>
-             </div>`
-          : `<div class="campo">
-               <label for="email">Email</label>
-               <input type="text" id="email" name="email" value="${esc(email)}" autofocus required>
-             </div>
-             <div class="campo">
-               <label for="password">Contrasena</label>
-               <input type="password" id="password" name="password" required>
-             </div>`
-      }
-      <button class="primario" type="submit" style="width:100%">Entrar</button>
-    </form>
-    ${modoClave ? "" : `<p class="mini faint" style="margin-top:16px">Si perdiste la contrasena, pedile al duenio del panel una invitacion nueva.</p>`}
+  return `<div class="portada">
+  <div class="portada-marca">
+    <span class="portada-punto"></span>
+    <h1 class="portada-titulo">${esc(PRODUCTO)}</h1>
   </div>
+  <p class="portada-linea">${
+    modoClave
+      ? "Esta instalación usa una clave compartida."
+      : "Contenido con la identidad de tu marca."
+  }</p>
+
+  ${error ? `<div class="aviso mal">${esc(error)}</div>` : ""}
+
+  <form method="post" action="/login" class="portada-form">
+    ${
+      modoClave
+        ? `<div class="campo">
+             <label for="clave">Clave del panel</label>
+             <input type="password" id="clave" name="clave" autofocus required autocomplete="current-password">
+           </div>`
+        : `<div class="campo">
+             <label for="email">Email</label>
+             <input type="email" id="email" name="email" value="${esc(email)}" autofocus required
+                    autocomplete="username" placeholder="vos@tumarca.com">
+           </div>
+           <div class="campo">
+             <label for="password">Contraseña</label>
+             <input type="password" id="password" name="password" required autocomplete="current-password">
+           </div>`
+    }
+    <button class="primario" type="submit" style="width:100%;margin-top:4px">Entrar</button>
+  </form>
+
+  ${
+    modoClave
+      ? ""
+      : `<p class="portada-pie">¿Perdiste la contraseña? No hay recuperación por email: pedile al dueño del panel una invitación nueva.</p>`
+  }
 </div>`;
 }
 
@@ -845,8 +948,8 @@ export function vistaNueva({ cfg, brand, hoy }) {
   <div class="campo"><label for="language">Idioma</label>
     <select id="language" name="language">${(brand?.languages ?? ["en"]).map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select>
   </div>
-  <div class="campo"><label for="angle">Angulo</label><input type="text" id="angle" name="angle" required placeholder="el gancho, en una linea"></div>
-  <div class="campo"><label for="message">Mensaje</label><textarea id="message" name="message" required placeholder="que tiene que quedarle a quien lo ve"></textarea></div>
+  <div class="campo"><label for="angle">Ángulo</label><input type="text" id="angle" name="angle" required placeholder="el gancho, en una linea"></div>
+  <div class="campo"><label for="message">Mensaje</label><textarea id="message" name="message" required placeholder="qué tiene que quedarle a quien lo ve"></textarea></div>
   <button class="primario" type="submit">Agendar</button>
 </form>`;
 }
@@ -869,16 +972,16 @@ export function vistaBorrar({ item }) {
  *
  * Borrar la marca no borra sus piezas — quedan huerfanas a proposito, porque el
  * contenido generado es trabajo pagado. Pero eso hay que decirlo, y hay que
- * ofrecer la otra opcion: si borras la marca porque fue una prueba, lo que
+ * ofrecer la otra opción: si borras la marca porque fue una prueba, lo que
  * queres es que no quede nada.
  */
 export function vistaBorrarMarca({ brand, piezas, fuentes, archivos, bytes }) {
   return `<h1>Borrar ${esc(brand.name)}</h1>
-<p class="sub">${esc(brand.site ?? "sin sitio")} · revision ${esc(brand.revision ?? 0)}</p>
+<p class="sub">${esc(brand.site ?? "sin sitio")} · revisión ${esc(brand.revision ?? 0)}</p>
 
 <div class="grid dos">
   <div class="card">
-    <h3>Que pasa</h3>
+    <h3>Qué pasa</h3>
     <table><tbody>
       <tr><td>La marca y su identidad</td><td style="width:1%"><span class="chip mal">se borra</span></td></tr>
       <tr><td>Su historial de revisiones</td><td><span class="chip mal">se borra</span></td></tr>
@@ -892,11 +995,11 @@ export function vistaBorrarMarca({ brand, piezas, fuentes, archivos, bytes }) {
     <h3>Los archivos en disco</h3>
     ${
       archivos
-        ? `<p class="mini">Esta marca dejo <strong>${archivos} carpeta(s)</strong>${bytes ? ` (${tamano(bytes)})` : ""}: su proyecto base y el de cada pieza que genero.</p>
+        ? `<p class="mini">Esta marca dejo <strong>${archivos} carpeta(s)</strong>${bytes ? ` (${tamaño(bytes)})` : ""}: su proyecto base y el de cada pieza que genero.</p>
            <label class="mini" style="display:flex;gap:8px;align-items:flex-start;font-weight:500;margin-top:12px">
              <input type="checkbox" name="archivos" value="1" form="borrar-marca" style="width:auto;margin-top:3px">
-             <span>Borrar tambien esas carpetas.<br>
-               <span class="faint">Solo se tocan las carpetas de proyectos y de contenido de esta instalacion. Los videos e imagenes que ya descargaste no estan ahi.</span></span>
+             <span>Borrar también esas carpetas.<br>
+               <span class="faint">Solo se tocan las carpetas de proyectos y de contenido de esta instalación. Los videos e imágenes que ya descargaste no están ahí.</span></span>
            </label>`
         : `<p class="mini faint">Esta marca no dejo archivos en disco.</p>`
     }
@@ -910,8 +1013,8 @@ export function vistaBorrarMarca({ brand, piezas, fuentes, archivos, bytes }) {
 </form>`;
 }
 
-/** Un tamano en bytes, redondeado como lo diria una persona. */
-function tamano(bytes) {
+/** Un tamaño en bytes, redondeado como lo diria una persona. */
+function tamaño(bytes) {
   const n = Number(bytes) || 0;
   if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
   if (n < 1024 * 1024 * 1024) return `${Math.round(n / (1024 * 1024))} MB`;
@@ -922,14 +1025,14 @@ function tamano(bytes) {
  * Antes de generar en lote: que piezas, de que marca, cuanto cuesta.
  *
  * El boton decia "Generar lo pendiente" y arrancaba hasta 20 piezas sin decir
- * cuantas ni de que. Con los precios reales de esta instalacion un carrusel
- * puede costar mas de veinte dolares, asi que el numero tiene que estar antes
- * del click y no despues, en la pantalla de costos.
+ * cuantas ni de que. Con los precios reales de esta instalación un carrusel
+ * puede costar mas de veinte dólares, así que el número tiene que estar antes
+ * del click y no después, en la pantalla de costos.
  */
 export function vistaConfirmarGenerar({ brand, piezas, estimacion, limite, concurrencia }) {
   if (!piezas.length) {
     return `<h1>No hay nada pendiente</h1>
-<p class="sub">Todas las piezas de ${esc(brand.name)} ya se generaron o estan en curso.</p>
+<p class="sub">Todas las piezas de ${esc(brand.name)} ya se generaron o están en curso.</p>
 <a class="boton" href="/calendario">Volver al calendario</a>`;
   }
 
@@ -944,7 +1047,7 @@ export function vistaConfirmarGenerar({ brand, piezas, estimacion, limite, concu
   const msTotal = conDato.reduce((a, f) => a + estimacion[f].ms * porFormato.get(f), 0);
 
   return `<h1>Generar ${aGenerar.length} pieza${aGenerar.length === 1 ? "" : "s"} de ${esc(brand.name)}</h1>
-<p class="sub">Esto le pide al modelo que escriba, componga y renderice cada una. Mira el numero antes de arrancar: se paga por token generado y no se puede deshacer.</p>
+<p class="sub">Esto le pide al modelo que escriba, componga y renderice cada una. Mira el número antes de arrancar: se paga por token generado y no se puede deshacer.</p>
 
 <div class="grid dos">
   <div class="card">
@@ -961,7 +1064,7 @@ export function vistaConfirmarGenerar({ brand, piezas, estimacion, limite, concu
               <td style="text-align:right" class="mono">${
                 e
                   ? `$${(e.usd * n).toFixed(2)}`
-                  : `<span class="faint" title="Todavia no se genero ninguna pieza de este formato">sin dato</span>`
+                  : `<span class="faint" title="Todavía no se genero ninguna pieza de este formato">sin dato</span>`
               }</td>
             </tr>`;
           })
@@ -985,10 +1088,10 @@ export function vistaConfirmarGenerar({ brand, piezas, estimacion, limite, concu
              }
            </div>`
         : `<div class="aviso" style="margin:14px 0 0">
-             <strong>Sin estimacion.</strong> Esta instalacion todavia no genero ninguna pieza de estos formatos, asi que no hay historial con que calcular el costo.
+             <strong>Sin estimacion.</strong> Esta instalación todavía no genero ninguna pieza de estos formatos, así que no hay historial con que calcular el costó.
            </div>`
     }
-    <p class="mini faint" style="margin-top:10px">Sale del promedio real de esta instalacion, formato por formato. Lo ya gastado esta en <a href="/costos">Costos</a>.</p>
+    <p class="mini faint" style="margin-top:10px">Sale del promedio real de esta instalación, formato por formato. Lo ya gastado está en <a href="/costos">Costos</a>.</p>
   </div>
 
   <div class="card">
@@ -1006,7 +1109,7 @@ export function vistaConfirmarGenerar({ brand, piezas, estimacion, limite, concu
     </tbody></table>
     ${
       recortado
-        ? `<p class="mini warn" style="margin-top:10px">Hay ${piezas.length} pendientes y se generan ${limite} por vez. Las ${piezas.length - limite} restantes quedan para la proxima.</p>`
+        ? `<p class="mini warn" style="margin-top:10px">Hay ${piezas.length} pendientes y se generan ${limite} por vez. Las ${piezas.length - limite} restantes quedan para la próxima.</p>`
         : ""
     }
   </div>
@@ -1022,12 +1125,12 @@ export function vistaConfirmarGenerar({ brand, piezas, estimacion, limite, concu
 /**
  * Antes de planificar: cuantas piezas se agregan al calendario y con que mezcla.
  * Planificar no cuesta casi nada, pero llena el calendario — y lo que llena el
- * calendario es lo que despues se genera.
+ * calendario es lo que después se genera.
  */
 export function vistaConfirmarPlan({ brand, dias, porSemana, mezcla, yaHay, desde, hasta }) {
   const total = Math.round((dias / 7) * porSemana);
-  return `<h1>Planificar ${dias} dias de ${esc(brand.name)}</h1>
-<p class="sub">El modelo propone los angulos y los reparte en el calendario. No genera nada todavia: las piezas quedan pendientes y las generas cuando quieras.</p>
+  return `<h1>Planificar ${dias} días de ${esc(brand.name)}</h1>
+<p class="sub">El modelo propone los ángulos y los reparte en el calendario. No genera nada todavia: las piezas quedan pendientes y las generas cuando quieras.</p>
 
 <div class="card">
   <h3>Lo que va a agregar</h3>
@@ -1049,7 +1152,7 @@ export function vistaConfirmarPlan({ brand, dias, porSemana, mezcla, yaHay, desd
 <form method="post" action="/action/plan" class="fila" style="margin-top:18px">
   <input type="hidden" name="dias" value="${esc(dias)}">
   <input type="hidden" name="brand" value="${esc(brand.id)}">
-  <button class="primario" type="submit" data-esperando="planificando...">Planificar ${dias} dias</button>
+  <button class="primario" type="submit" data-esperando="planificando...">Planificar ${dias} días</button>
   <a class="boton" href="/calendario">Cancelar</a>
 </form>`;
 }

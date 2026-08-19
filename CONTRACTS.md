@@ -326,6 +326,17 @@ startWeb(cfg, store, handlers, { port?, host?, log? }) -> Promise<http.Server>
   `reject(id, motivo)`, `crearMarca(opts)`, `revisarMarca(id, feedback)`,
   `sincronizar(brandId)`, `rescue()`. Los que faltan degradan con un mensaje,
   no con un 500.
+- **`building` no significa "en curso".** Es "alguien la empezó": si el proceso
+  murió, la fila queda igual. `estadoDe(item)` distingue `running` / `stale`
+  (hay job, sin latido) / `orphan` (building sin job) y `detenidosDe(items)`
+  resuelve eso de una para toda una pantalla. Las vistas pintan **detenido** en
+  esos casos, con desde cuándo, en qué fase y el último fallo real
+  (`store.ultimoFallo`). Decir "generando" ahí hace esperar por algo que no va
+  a pasar.
+- **Revisión anterior:** regenerar limpia `items.asset_path`, pero el
+  entregable de la revisión previa sigue en disco y se sirve en
+  `/asset/<id>/r<N>`. La pieza lo muestra como "lo último que salió bien" en vez
+  de decir que no hay nada.
 - **Marca activa:** cookie `bca_marca`; sin ella, `store.defaultBrand()`.
 - **Tema:** cookie `bca_tema` (auto | claro | oscuro) — la lee el server para
   servir el HTML ya pintado y que no haya parpadeo. `auto` deja mandar a la

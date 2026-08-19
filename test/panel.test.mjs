@@ -333,3 +333,60 @@ test("el tour se puede apagar y deja de aparecer al entrar", async () => {
   await post("/action/tour-reiniciar", {}, cookie);
   assert.equal((await login()).headers.get("location"), "/empezar");
 });
+
+// ---------------------------------------------------------------------------
+// Detenido: no hacer esperar a nadie por algo que no esta pasando
+// ---------------------------------------------------------------------------
+
+test("una pieza en building con el proceso muerto se muestra detenida, no generando", async () => {
+  const id = "2026-11-01-quedo-a-medias";
+  store.upsertItem({
+    id,
+    scheduled_for: "2026-11-01",
+    format: "text",
+    language: "es",
+    angle: "quedo a medias",
+    message: "m",
+    status: "planned",
+    brandId: "vieja",
+  });
+  store.setStatus(id, "building");
+  // Un job con latido viejo y un pid que no existe: la corrida murio.
+  store.db
+    .prepare(
+      `INSERT OR REPLACE INTO jobs (item_id, kind, phase, pid, started_at, heartbeat)
+       VALUES (?, 'generate', 'check', 999999, datetime('now','-2 hours'), datetime('now','-2 hours'))`,
+    )
+    .run(id);
+  store.logRun({ kind: "render", itemId: id, ok: false, detail: "check fallo: content_overlap" });
+
+  const html = await (await get(`/item/${id}`, cookie)).text();
+  assert.match(html, /detenido/, "el chip lo dice");
+  assert.match(html, /no se está generando/i, "y la pagina lo explica con todas las letras");
+  assert.match(html, /content_overlap/, "con el motivo real del ultimo fallo");
+  assert.match(html, /Retomar/, "y una salida");
+  assert.doesNotMatch(html, /class="barra"><i>/, "sin barra de progreso: no hay nada progresando");
+
+  // El calendario tambien: es donde se mira de reojo.
+  const cal = await (await get("/calendario?from=2026-11-01&days=7", conMarca("vieja"))).text();
+  assert.match(cal, /chip detenido/, "el calendario lo marca igual");
+});
+
+test("/api/estado deja de decir generando cuando el proceso murio", async () => {
+  const r = await get("/api/estado/2026-11-01-quedo-a-medias", cookie);
+  const d = await r.json();
+  assert.equal(d.estado, "building", "el status crudo de la base no cambia");
+  assert.equal(d.estadoTexto, "detenido", "pero lo que se muestra, si");
+  assert.equal(d.recargar, true, "y la pagina se refresca para mostrar el cartel");
+});
+
+test("hay una forma visible de cerrar sesion", async () => {
+  const html = await (await get("/crear", cookie)).text();
+  assert.match(html, /href="\/salir"/, "el link existe en la pagina");
+  assert.match(html, /Cerrar sesión/);
+
+  const salida = await get("/salir", cookie);
+  assert.equal(salida.status, 303);
+  assert.equal(salida.headers.get("location"), "/login");
+  assert.match(salida.headers.get("set-cookie") ?? "", /bca_sesion=;/, "y la cookie se limpia");
+});

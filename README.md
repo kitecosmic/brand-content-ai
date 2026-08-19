@@ -155,9 +155,16 @@ Que esto sea seguro no es casualidad: `normalizePalette` ya garantiza los
 contrastes WCAG de toda paleta antes de guardarla, así que ninguna marca puede
 dejar el panel ilegible.
 
-Desde el detalle podes generar, aprobar, o escribir que esta mal y regenerar. Las
+Desde el detalle podés generar, aprobar, o escribir qué está mal y regenerar. Las
 acciones largas se disparan en segundo plano y el estado real se lee de la base,
-asi que refrescar siempre dice la verdad.
+así que refrescar siempre dice la verdad.
+
+**Una pieza que se cortó lo dice.** Si el proceso que la generaba murió (cerraste
+la terminal, se reinició el servidor), la pieza queda marcada como **detenido** —
+no como "generando" — con desde cuándo, en qué fase se cortó, el error real del
+linter y un botón para retomarla. Y si esa pieza ya había salido bien antes, se
+muestra el archivo de la revisión anterior en vez de decir que no hay nada: sigue
+en disco.
 
 **Las acciones que cuestan plata avisan primero.** "Generar lo pendiente" no
 arranca: te lleva a una pantalla que dice cuántas piezas son, de qué marca, y

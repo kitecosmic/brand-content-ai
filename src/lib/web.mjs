@@ -320,7 +320,14 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     const ahora = loadConfig();
     const cuerpo =
       (modeloConfigurado(ahora) ? "" : avisoSinModelo()) +
-      vistaCrear({ cfg, brand, recientes, enCurso, hayTelegram: telegramConfigurado(ahora) });
+      vistaCrear({
+        cfg,
+        brand,
+        recientes,
+        enCurso,
+        hayTelegram: telegramConfigurado(ahora),
+        detenidos: detenidosDe(recientes),
+      });
     return html(res, marco, "Crear", cuerpo, "crear");
   }
 
@@ -352,6 +359,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         hoy: today(),
         total: items.length,
         pendientes: pendientesDe(brand.id).length,
+        detenidos: detenidosDe(items),
       }),
       "calendario",
     );
@@ -560,21 +568,21 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         titulo: "Esto genera contenido con la identidad de tu marca",
         detalle: `<p>En tres minutos vas a tener tu primera pieza. El camino es corto:</p>
           <ul style="margin:0 0 4px;padding-left:20px">
-            <li class="mini">conectas el modelo que escribe y compone</li>
-            <li class="mini">le das la URL de tu marca y saca de ahi los colores, la tipografia y el tono</li>
-            <li class="mini">le pedis una pieza y la mira salir</li>
+            <li class="mini">conectás el modelo que escribe y compone</li>
+            <li class="mini">le das la URL de tu marca y saca de ahí los colores, la tipografía y el tono</li>
+            <li class="mini">le pedís una pieza y la mirás salir</li>
           </ul>`,
         hecho: false,
         cuerpo: `<a class="boton primario" href="/empezar?paso=1">Empezar</a>`,
       },
       {
-        titulo: "Conecta el modelo",
+        titulo: "Conectá el modelo",
         detalle:
           "<p>Brand Content AI escribe y compone con MiniMax. Su API key sale de " +
           '<a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> ' +
-          "&rarr; API Keys. Es lo unico imprescindible; el resto se configura despues.</p>",
+          "&rarr; API Keys. Es lo único imprescindible; el resto se configura después.</p>",
         hecho: hayModelo,
-        resumen: "El modelo ya esta conectado.",
+        resumen: "El modelo ya está conectado.",
         cuerpo: `<form method="post" action="/action/ajustes">
             <input type="hidden" name="back" value="/empezar?paso=2">
             <div class="campo">
@@ -582,20 +590,20 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
                 <label for="minimax_api_key" style="margin:0">API key</label>
                 <button type="button" class="chico" data-ver="minimax_api_key" data-libre="1" style="padding:2px 8px;font-size:12px">ver</button>
               </div>
-              <input type="password" id="minimax_api_key" name="minimax_api_key" placeholder="pegala aca" required autocomplete="off">
-              <div class="ayuda">Se guarda en la base de este servidor y no sale de aca.</div>
+              <input type="password" id="minimax_api_key" name="minimax_api_key" placeholder="pegala acá" required autocomplete="off">
+              <div class="ayuda">Se guarda en la base de este servidor y no sale de acá.</div>
             </div>
             <button class="primario" type="submit" data-esperando="guardando...">Guardar y seguir</button>
           </form>`,
       },
       {
-        titulo: "Crea tu marca",
+        titulo: "Creá tu marca",
         detalle:
-          "<p>Con la URL de tu sitio saca los colores, la tipografia, el tono y de que habla el producto. " +
-          "Despues la ajustas hablando: <em>mas oscuro, el acento en violeta</em>.</p>",
+          "<p>Con la URL de tu sitio saca los colores, la tipografía, el tono y de qué habla el producto. " +
+          "Después la ajustás hablando: <em>mas oscuro, el acento en violeta</em>.</p>",
         hecho: marcas.length > 0,
         resumen: brand
-          ? `Ya tenes <strong>${esc(brand.name)}</strong>${brand.site ? ` (${esc(brand.site)})` : ""}. Podes crear otras cuando quieras desde Marcas.`
+          ? `Ya tenes <strong>${esc(brand.name)}</strong>${brand.site ? ` (${esc(brand.site)})` : ""}. Podés crear otras cuando quieras desde Marcas.`
           : "",
         cuerpo: hayModelo
           ? `<form method="post" action="/action/marca-nueva">
@@ -609,16 +617,16 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
                 <input type="text" id="notas" name="notas" placeholder="tecnica y directa, publico developer">
               </div>
               <button class="primario" type="submit" data-esperando="leyendo el sitio...">Crear marca</button>
-              <div class="ayuda">Tarda un minuto: lee el sitio, propone la identidad y baja las tipografias.</div>
+              <div class="ayuda">Tarda un minuto: lee el sitio, propone la identidad y baja las tipografías.</div>
             </form>`
-          : `<p class="mini err">Primero conecta el modelo: sin el no se puede armar una marca.</p>
+          : `<p class="mini err">Primero conectá el modelo: sin él no se puede armar una marca.</p>
              <a class="boton" href="/empezar?paso=1">Volver al paso anterior</a>`,
       },
       {
-        titulo: "Lee sus fuentes",
+        titulo: "Leé sus fuentes",
         detalle:
-          "<p>De aca salen los hechos que el contenido puede afirmar, cada uno con la pagina donde se verifico. " +
-          "Sin esto las piezas salen genericas — es lo que separa un post que dice algo de uno que suena a folleto.</p>",
+          "<p>De acá salen los hechos que el contenido puede afirmar, cada uno con la página donde se verificó. " +
+          "Sin esto las piezas salen genéricas — es lo que separa un post que dice algo de uno que suena a folleto.</p>",
         hecho: fuentes.length > 0,
         resumen: fuentes.length
           ? `${fuentes.length} fuente(s) leidas, ${fuentes.reduce((a, f) => a + (f.facts?.length ?? 0), 0)} hechos citables.`
@@ -628,16 +636,16 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
               <input type="hidden" name="brand" value="${esc(brand.id)}">
               <input type="hidden" name="back" value="/empezar?paso=4">
               <button class="primario" type="submit" data-esperando="leyendo...">Leer el sitio de ${esc(brand.name)}</button>
-              <div class="ayuda">Tarda un minuto. Podes seguir y volver despues.</div>
+              <div class="ayuda">Tarda un minuto. Podés seguir y volver después.</div>
             </form>`
-          : `<p class="mini err">Todavia no hay marca.</p><a class="boton" href="/empezar?paso=2">Volver</a>`,
+          : `<p class="mini err">Todavía no hay marca.</p><a class="boton" href="/empezar?paso=2">Volver</a>`,
       },
       {
-        titulo: hechas.length ? "Ya generaste tu primera pieza" : "Pedi tu primera pieza",
+        titulo: hechas.length ? "Ya generaste tu primera pieza" : "Pedí tu primera pieza",
         detalle: hechas.length
-          ? "<p>Listo: el sistema ya funciona de punta a punta. Cuando quieras otra, es la pestana Crear.</p>"
-          : "<p>Deci que queres comunicar y elegi el formato: texto, imagen, historia vertical, carrusel, video o reel. " +
-            "Sale con la identidad de tu marca y podes verla mientras se arma.</p>",
+          ? "<p>Listo: el sistema ya funciona de punta a punta. Cuando quieras otra, es la pestaña Crear.</p>"
+          : "<p>Decí qué querés comunicar y elegí el formato: texto, imagen, historia vertical, carrusel, video o reel. " +
+            "Sale con la identidad de tu marca y podés verla mientras se arma.</p>",
         hecho: hechas.length > 0,
         final: true,
       },
@@ -696,6 +704,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         media: bloqueMedia(item),
         cfg,
         hayTelegram: telegramConfigurado(loadConfig()),
+        fallo: store.ultimoFallo(item.id),
       }),
       "calendario",
     );
@@ -716,7 +725,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     // formulario nombre otra explicitamente.
     const activa = () => resolverMarca(marcaCookie);
     const soloDuenio = () =>
-      usuario.role !== "owner" ? "esa accion es del duenio del panel" : null;
+      usuario.role !== "owner" ? "esa acción es del dueño del panel" : null;
     const volver = (a, { msg, err } = {}) => {
       const q = msg ? `msg=${encodeURIComponent(msg)}` : err ? `err=${encodeURIComponent(err)}` : "";
       const union = q ? (a.includes("?") ? "&" : "?") : "";
@@ -795,16 +804,16 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         const no = soloDuenio();
         if (no) return volver("/equipo", { err: no });
         store.deleteInvite(String(params.get("token") ?? ""));
-        return volver("/equipo", { msg: "Invitacion anulada." });
+        return volver("/equipo", { msg: "Invitación anulada." });
       }
 
       case "usuario-borrar": {
         const no = soloDuenio();
         if (no) return volver("/equipo", { err: no });
         const id = String(params.get("id") ?? "");
-        if (id === usuario.id) return volver("/equipo", { err: "no te podes sacar a vos mismo" });
+        if (id === usuario.id) return volver("/equipo", { err: "no te podés sacar a vos mismo" });
         if (esUltimoOwner(store, id)) {
-          return volver("/equipo", { err: "es el ultimo duenio: nombra otro antes de sacarlo" });
+          return volver("/equipo", { err: "es el último dueño: nombrá otro antes de sacarlo" });
         }
         store.deleteUser(id);
         return volver("/equipo", { msg: "Listo, ya no puede entrar." });
@@ -818,12 +827,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         if (nueva) {
           const fila = store.getUser(usuario.id);
           if (!fila || !verifyPassword(actual, fila.pass_hash)) {
-            return volver("/equipo", { err: "la contrasena actual no coincide" });
+            return volver("/equipo", { err: "la contraseña actual no coincide" });
           }
           const malo = validarPassword(nueva);
           if (malo) return volver("/equipo", { err: malo });
           store.updateUser(usuario.id, { passHash: hashPassword(nueva) });
-          return volver("/equipo", { msg: "Contrasena cambiada." });
+          return volver("/equipo", { msg: "Contraseña cambiada." });
         }
         return volver("/equipo", { msg: "Guardado." });
       }
@@ -841,9 +850,9 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       // El boton que sostiene la promesa del producto: pedir y que salga.
       case "crear-ahora": {
         const brand = activa();
-        if (!brand) return volver("/marcas", { err: "crea una marca antes de generar contenido" });
+        if (!brand) return volver("/marcas", { err: "creá una marca antes de generar contenido" });
         const tema = String(params.get("tema") ?? "").trim();
-        if (!tema) return volver("/crear", { err: "deci que queres comunicar" });
+        if (!tema) return volver("/crear", { err: "decí qué querés comunicar" });
         const format = String(params.get("format") ?? "text");
         if (!cfg.formats?.[format] || cfg.formats[format].enabled === false) {
           return volver("/crear", { err: `formato invalido: ${format}` });
@@ -865,16 +874,16 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         });
         const entregar = params.get("entregar") === "1";
         lanzar(id, () => handlers.generate?.(id, { entregar }));
-        return volver(`/item/${encodeURIComponent(id)}`, { msg: "Arranco. Esta pagina se actualiza sola." });
+        return volver(`/item/${encodeURIComponent(id)}`, { msg: "Arrancó. Esta página se actualiza sola." });
       }
 
       case "marca-nueva": {
         const sitio = String(params.get("url") ?? "").trim();
         const nombre = String(params.get("nombre") ?? "").trim();
-        if (!sitio && !nombre) return volver("/marcas", { err: "pone al menos la URL o el nombre" });
-        if (running.has("__marca")) return volver("/marcas", { err: "ya se esta creando una marca" });
+        if (!sitio && !nombre) return volver("/marcas", { err: "poné al menos la URL o el nombre" });
+        if (running.has("__marca")) return volver("/marcas", { err: "ya se está creando una marca" });
         if (typeof handlers.crearMarca !== "function") {
-          return volver("/marcas", { err: "este panel se levanto sin el motor de marcas (usa npm run bot)" });
+          return volver("/marcas", { err: "este panel se levantó sin el motor de marcas (usá npm run bot)" });
         }
         const colores = String(params.get("colores") ?? "")
           .split(/[\s,]+/)
@@ -906,12 +915,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         const brand = marcaDe();
         const feedback = String(params.get("feedback") ?? "").trim();
         if (!brand) return volver("/marcas", { err: "no existe esa marca" });
-        if (!feedback) return volver(`/marcas/${brand.id}`, { err: "deci que cambiar" });
+        if (!feedback) return volver(`/marcas/${brand.id}`, { err: "decí qué cambiar" });
         if (running.has(`__marca:${brand.id}`)) {
           return volver(`/marcas/${brand.id}`, { err: "ya hay un cambio en curso" });
         }
         if (typeof handlers.revisarMarca !== "function") {
-          return volver(`/marcas/${brand.id}`, { err: "este panel se levanto sin el motor de marcas" });
+          return volver(`/marcas/${brand.id}`, { err: "este panel se levantó sin el motor de marcas" });
         }
         lanzar(`__marca:${brand.id}`, () => handlers.revisarMarca(brand.id, feedback));
         return volver(`/marcas/${brand.id}`, { msg: "Aplicando el cambio…" });
@@ -986,7 +995,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
           ref: sitio,
           label: sitio.replace(/^https?:\/\//, "").slice(0, 40),
         });
-        return volver(`/marcas/${brand.id}`, { msg: "Fuente agregada. Sincroniza para leerla." });
+        return volver(`/marcas/${brand.id}`, { msg: "Fuente agregada. Sincronizá para leerla." });
       }
 
       case "fuente-borrar": {
@@ -999,7 +1008,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         const brand = marcaDe();
         if (!brand) return volver("/marcas", { err: "no existe esa marca" });
         if (running.has(`__sync:${brand.id}`)) {
-          return volver(`/marcas/${brand.id}`, { err: "ya se esta sincronizando" });
+          return volver(`/marcas/${brand.id}`, { err: "ya se está sincronizando" });
         }
         lanzar(`__sync:${brand.id}`, () => handlers.sincronizar?.(brand.id));
         return volver(atras() !== "/crear" ? atras() : `/marcas/${brand.id}`, {
@@ -1009,8 +1018,8 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
 
       case "plan": {
         const brand = marcaDe();
-        if (!brand) return volver("/marcas", { err: "crea una marca antes de planificar" });
-        if (running.has("__plan")) return volver("/calendario", { err: "ya hay una planificacion en curso" });
+        if (!brand) return volver("/marcas", { err: "creá una marca antes de planificar" });
+        if (running.has("__plan")) return volver("/calendario", { err: "ya hay una planificación en curso" });
         const dias = clamp(Number(params.get("dias") ?? 14) || 14, 1, MAX_DIAS);
         lanzar("__plan", () => handlers.plan?.(dias, undefined, brand.id));
         return volver("/calendario", { msg: `Planificando ${dias} dias…` });
@@ -1018,9 +1027,9 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
 
       case "generar-pendientes": {
         const brand = marcaDe();
-        if (!brand) return volver("/marcas", { err: "crea una marca antes de generar contenido" });
+        if (!brand) return volver("/marcas", { err: "creá una marca antes de generar contenido" });
         if (running.has("__pendientes")) {
-          return volver("/calendario", { err: "ya hay una generacion masiva en curso" });
+          return volver("/calendario", { err: "ya hay una generación masiva en curso" });
         }
         // Solo las de esta marca: el boton vive en SU calendario, y generar de
         // paso las de otra marca es gastar plata que nadie pidio gastar.
@@ -1064,7 +1073,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         const motivo = String(params.get("reason") ?? "").trim();
         if (!motivo) {
           return volver(`/item/${encodeURIComponent(id)}`, {
-            err: "hace falta un motivo: es lo que guia la regeneracion",
+            err: "hace falta un motivo: es lo que guía la regeneración",
           });
         }
         const puerta = puedeGenerar(id);
@@ -1132,10 +1141,14 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       "application/json; charset=utf-8",
       JSON.stringify({
         estado: item.status,
-        estadoTexto: ETIQUETA_ESTADO[item.status] ?? item.status,
+        estadoTexto:
+          item.status === "building" && estado.kind !== "running"
+            ? "detenido"
+            : (ETIQUETA_ESTADO[item.status] ?? item.status),
         faseTexto: faseTexto(estado.job),
         // Cuando deja de estar en curso hay cosas nuevas que mostrar (el asset,
-        // el brief, el error): ahi si conviene recargar la pagina entera.
+        // el brief, el error, o el cartel de que se detuvo): ahi si conviene
+        // recargar la pagina entera.
         recargar: estado.kind !== "running",
       }),
     );
@@ -1182,15 +1195,33 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     return { kind: "idle", job: null };
   }
 
+  /**
+   * Los ids que dicen "generando" pero no lo estan.
+   *
+   * Se calcula de una para toda una pantalla: preguntar por pieza haria una
+   * consulta de jobs por cada celda del calendario.
+   */
+  function detenidosDe(items) {
+    const jobs = store.activeJobs({ staleSeconds });
+    const vivos = new Set(jobs.filter((j) => !j.stale).map((j) => j.item_id));
+    const out = new Set();
+    for (const it of items) {
+      if (it.status !== "building") continue;
+      if (vivos.has(it.id) || running.has(it.id)) continue;
+      out.add(it.id);
+    }
+    return out;
+  }
+
   /** El panel no es una forma de saltarse el limite que respeta el resto. */
   function puedeGenerar(id) {
-    if (running.has(id)) return "Ya se esta generando (lo lanzaste desde este panel).";
-    if (running.has("__pendientes")) return "Hay una generacion masiva en curso: espera a que termine.";
+    if (running.has(id)) return "Ya se está generando (lo lanzaste desde este panel).";
+    if (running.has("__pendientes")) return "Hay una generación masiva en curso: esperá a que termine.";
     const job = store.activeJobs({ staleSeconds }).find((j) => j.item_id === id && !j.stale);
-    if (job) return `Ya se esta generando (pid ${job.pid}).`;
+    if (job) return `Ya se está generando (pid ${job.pid}).`;
     const max = Math.max(1, Number(cfg.limits?.maxConcurrentGenerations ?? 2));
     const vivos = jobsVivos().length;
-    if (vivos >= max) return `Ya hay ${vivos} generacion(es) en curso (el limite es ${max}).`;
+    if (vivos >= max) return `Ya hay ${vivos} generación(es) en curso (el límite es ${max}).`;
     return null;
   }
 
@@ -1214,37 +1245,66 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   function bloqueMedia(item) {
     const asset = item.asset_path;
     if (!asset || !existsSync(asset)) {
-      return `<div class="card"><p class="dim mini">Todavia no hay entregable.</p></div>`;
+      // Regenerar limpia `asset_path`, asi que una pieza que ya habia salido
+      // bien decia "todavia no hay entregable" teniendo su version anterior en
+      // disco, a un click. Si el intento nuevo se cayo, eso es exactamente lo
+      // que se quiere ver.
+      const previa = store
+        .listRevisions(item.id)
+        .filter((r) => r.asset_path && existsSync(r.asset_path))
+        .pop();
+      if (previa) {
+        return `<div class="card">
+          <div class="entre" style="margin-bottom:12px">
+            <h3 style="margin:0">Lo último que salió bien</h3>
+            <span class="chip">revisión ${esc(previa.revision)}</span>
+          </div>
+          ${bloqueArchivo(previa.asset_path, `/asset/${encodeURIComponent(item.id)}/r${encodeURIComponent(previa.revision)}`, item.angle)}
+          <p class="mini faint" style="margin-top:10px">El intento actual todavía no produjo un archivo. Este es el de la revisión anterior, que sigue en disco.</p>
+        </div>`;
+      }
+      return `<div class="card"><p class="dim mini">Todavía no hay entregable.</p></div>`;
     }
-    const href = `/asset/${encodeURIComponent(item.id)}`;
+    return `<div class="card">${bloqueArchivo(asset, `/asset/${encodeURIComponent(item.id)}`, item.angle)}</div>`;
+  }
+
+  /** Como se muestra un entregable, sea el actual o el de una revision anterior. */
+  function bloqueArchivo(asset, href, alt) {
     if (statSync(asset).isDirectory()) {
       const slides = readdirSync(asset)
         .filter((f) => IMAGE_EXT.has(extname(f).toLowerCase()))
         .sort();
-      return `<div class="card"><h3>${slides.length} slides</h3><div class="slides">${slides
+      return `<h3>${slides.length} slides</h3><div class="slides">${slides
         .map(
           (f) =>
             `<div class="preview"><img loading="lazy" src="${href}/${encodeURIComponent(f)}" alt="${esc(f)}"></div>`,
         )
-        .join("")}</div></div>`;
+        .join("")}</div>`;
     }
     const ext = extname(asset).toLowerCase();
     if (ext === ".mp4") {
-      return `<div class="card"><div class="preview"><video controls preload="metadata" src="${href}"></video></div></div>`;
+      return `<div class="preview"><video controls preload="metadata" src="${href}"></video></div>`;
     }
     if (IMAGE_EXT.has(ext)) {
-      return `<div class="card"><div class="preview"><img src="${href}" alt="${esc(item.angle)}"></div></div>`;
+      return `<div class="preview"><img src="${href}" alt="${esc(alt)}"></div>`;
     }
-    return `<div class="card"><pre class="bloque">${esc(leerTexto(asset))}</pre></div>`;
+    return `<pre class="bloque">${esc(leerTexto(asset))}</pre>`;
   }
 
   function servirAsset(res, resto) {
     const [rawId, ...cola] = resto.split("/");
     const item = store.getItem(decodeURIComponent(rawId));
-    if (!item?.asset_path || !existsSync(item.asset_path)) {
-      return enviar(res, 404, "text/plain", "no encontrado");
+    if (!item) return enviar(res, 404, "text/plain", "no encontrado");
+
+    // `/asset/<id>/r3` es el entregable de la revision 3, que sigue en disco
+    // aunque el intento actual haya limpiado item.asset_path.
+    let raiz = item.asset_path;
+    if (/^r\d+$/.test(cola[0] ?? "")) {
+      const n = Number(cola.shift().slice(1));
+      raiz = store.listRevisions(item.id).find((r) => Number(r.revision) === n)?.asset_path ?? null;
     }
-    const base = resolve(item.asset_path);
+    if (!raiz || !existsSync(raiz)) return enviar(res, 404, "text/plain", "no encontrado");
+    const base = resolve(raiz);
     let destino = base;
     if (cola.length) {
       if (!statSync(base).isDirectory()) return enviar(res, 404, "text/plain", "no encontrado");
@@ -1491,8 +1551,8 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   }
 
   function avisoSoloDuenio(que) {
-    return `<h1>Esto lo maneja el duenio del panel</h1>
-      <p class="sub">Tu cuenta es de miembro: podes crear, generar y descargar contenido, pero ${esc(que)} los toca quien administra la instalacion.</p>
+    return `<h1>Esto lo maneja el dueño del panel</h1>
+      <p class="sub">Tu cuenta es de miembro: podés crear, generar y descargar contenido, pero ${esc(que)} los toca quien administra la instalación.</p>
       <a class="boton" href="/crear">Volver a crear</a>`;
   }
 

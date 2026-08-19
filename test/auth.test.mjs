@@ -160,7 +160,7 @@ test("el asistente arranca en el paso pendiente y avanza al completarlo", async 
   assert.match(html, /Esto genera contenido con la identidad de tu marca/);
 
   html = await (await get("/empezar?paso=1", cookie)).text();
-  assert.match(html, /Conecta el modelo/);
+  assert.match(html, /Conectá el modelo/);
   assert.match(html, /API key/);
   assert.doesNotMatch(html, /Endpoint/, "el asistente no pregunta cosas avanzadas");
 
@@ -173,7 +173,7 @@ test("el asistente arranca en el paso pendiente y avanza al completarlo", async 
   assert.match(guardado.headers.get("location") ?? "", /^\/empezar\?paso=2/);
 
   html = await (await get("/empezar?paso=1", cookie)).text();
-  assert.match(html, /ya esta listo/, "el paso queda marcado");
+  assert.match(html, /ya está listo/, "el paso queda marcado");
 });
 
 test("invitar: link de un solo uso, y el invitado entra como miembro", async () => {
@@ -200,10 +200,10 @@ test("un miembro genera contenido pero no toca los ajustes ni invita", async () 
   const cookie = galleta(await post("/login", { email: "ana@marca.com", password: "otra frase larga" }));
 
   assert.equal((await get("/crear", cookie)).status, 200, "puede crear");
-  assert.match(await (await get("/ajustes", cookie)).text(), /lo maneja el duenio/);
+  assert.match(await (await get("/ajustes", cookie)).text(), /lo maneja el dueño/);
 
   const intento = await post("/action/invitar", { email: "colado@marca.com" }, cookie);
-  assert.match(decodeURIComponent(intento.headers.get("location") ?? ""), /duenio/);
+  assert.match(decodeURIComponent(intento.headers.get("location") ?? ""), /dueño/);
   assert.equal(store.countUsers(), 2, "no se creo ninguna invitacion");
 
   const equipo = await (await get("/equipo", cookie)).text();

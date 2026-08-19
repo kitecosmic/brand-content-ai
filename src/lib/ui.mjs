@@ -146,6 +146,9 @@ const ESTADO_TONO = {
   delivered: "ok",
   approved: "ok",
   rejected: "mal",
+  // No es un status de la base: es `building` con el proceso muerto. Se pinta
+  // distinto a proposito, porque quien lo ve tiene que dejar de esperar.
+  detenido: "detenido",
 };
 
 /** El estado de una pieza, como etiqueta con color propio. */
@@ -278,8 +281,15 @@ function banda(brand) {
   return `<div class="banda" style="background:linear-gradient(90deg, ${tramos})"></div>`;
 }
 
+/**
+ * La banda en las pantallas sin sesión.
+ *
+ * Si hay marca activa se muestra igual, porque ya dice de quién es esta
+ * instalación. Sin marca no hay nada que mostrar: una franja gris arriba de un
+ * login es ruido, no identidad.
+ */
 function bandaSuelta(brand) {
-  return banda(brand);
+  return brand?.palette ? banda(brand) : "";
 }
 
 function barra({ activa, marcas, marcaActiva, tab, usuario, faltaEmpezar }) {
@@ -328,8 +338,19 @@ function barra({ activa, marcas, marcaActiva, tab, usuario, faltaEmpezar }) {
       </button>
       ${
         usuario
-          ? `<a class="usuario" href="/equipo" title="${esc(usuario.email ?? "")}">${esc(iniciales(usuario.name || usuario.email))}</a>`
-          : ""
+          ? `<div class="yo">
+               <a class="usuario" href="/equipo" title="${esc(usuario.name || usuario.email)} — ver el equipo">${esc(iniciales(usuario.name || usuario.email))}</a>
+               <div class="yo-menu">
+                 <div class="yo-quien">
+                   <strong>${esc(usuario.name || usuario.email)}</strong>
+                   <div class="mini faint">${esc(usuario.email ?? "")}${usuario.role === "owner" ? " · dueño" : ""}</div>
+                 </div>
+                 <a class="yo-item" href="/equipo">Equipo e invitaciones</a>
+                 <a class="yo-item" href="/ajustes">Ajustes</a>
+                 <a class="yo-item salir" href="/salir">Cerrar sesión</a>
+               </div>
+             </div>`
+          : `<a class="boton chico" href="/salir" title="Volver a la pantalla de entrada">Salir</a>`
       }
     </div>
   </div>
@@ -426,6 +447,43 @@ body{
   background:var(--accent);color:var(--on-accent);text-decoration:none;
   font-size:11.5px;font-weight:700;letter-spacing:.02em;
 }
+/* El avatar abre el menu de cuenta. Con :hover y :focus-within funciona sin una
+   linea de JS y sigue siendo alcanzable con el teclado. */
+.yo{position:relative}
+.yo-menu{
+  position:absolute;right:0;top:calc(100% + 8px);min-width:210px;z-index:40;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  box-shadow:var(--sombra-alta);padding:6px;
+  opacity:0;visibility:hidden;transform:translateY(-4px);
+  transition:opacity .12s ease,transform .12s ease,visibility .12s;
+}
+.yo:hover .yo-menu,.yo:focus-within .yo-menu{opacity:1;visibility:visible;transform:none}
+.yo-quien{padding:8px 10px 10px;border-bottom:1px solid var(--line);margin-bottom:6px;font-size:13px}
+.yo-item{
+  display:block;padding:7px 10px;border-radius:7px;font-size:13px;
+  color:var(--ink);text-decoration:none;
+}
+.yo-item:hover{background:var(--hover)}
+.yo-item.salir{color:var(--err);margin-top:2px;border-top:1px solid var(--line);border-radius:0 0 7px 7px}
+.yo-item.salir:hover{background:var(--err-suave)}
+
+/* --- portada: login, alta de cuenta, invitacion ------------------------ */
+/* Una columna angosta apoyada en la pagina, sin tarjeta. Es la unica pantalla
+   sin marca que mostrar, asi que la jerarquia la cargan el tamanio y el aire. */
+.portada{max-width:352px;margin:0 auto;padding:16vh 24px 96px}
+.portada-marca{display:flex;align-items:center;gap:11px;margin-bottom:10px}
+.portada-punto{
+  width:11px;height:11px;border-radius:50%;background:var(--accent);flex:none;
+  box-shadow:0 0 0 4px var(--accent-suave);
+}
+.portada-titulo{font-size:23px;margin:0;letter-spacing:-.02em}
+.portada-linea{color:var(--muted);font-size:14px;margin:0 0 30px}
+.portada-form{margin-bottom:22px}
+.portada-form .campo{margin-bottom:16px}
+.portada-form input{padding:10px 12px;font-size:14px}
+.portada-pie{font-size:12px;line-height:1.5;color:var(--hint);margin:0;padding-top:18px;border-top:1px solid var(--line)}
+.portada-pie a{color:var(--muted)}
+@media (max-width:520px){.portada{padding-top:10vh}}
 
 /* --- lienzo y tipografia ---------------------------------------------- */
 .lienzo{max-width:1240px;margin:0 auto;padding:30px 24px 96px}
@@ -535,6 +593,10 @@ form{margin:0}
 .chip.curso{background:var(--accent-suave);color:var(--ink);border-color:var(--accent-borde)}
 .chip.mal{background:var(--err-suave);color:var(--err);border-color:transparent}
 .chip.espera{background:var(--hover);color:var(--muted)}
+/* Detenido no es un error ni un estado en curso: es trabajo que quedo a medias
+   y espera una decision. Lleva borde punteado para leerse como "incompleto" de
+   un vistazo, incluso en el calendario donde el chip es lo unico que se ve. */
+.chip.detenido{background:var(--warn-suave);color:var(--warn);border:1px dashed var(--warn)}
 
 /* --- trabajo en curso -------------------------------------------------- */
 .vivo{
