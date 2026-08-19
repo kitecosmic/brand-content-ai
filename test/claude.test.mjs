@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 
-import { runClaude, runClaudeJSON, extractJSON, ClaudeError } from "../src/lib/claude.mjs";
+import { conArchivos, runClaude, runClaudeChat, runClaudeJSON, extractJSON, ClaudeError } from "../src/lib/claude.mjs";
 
 /**
  * Levanta un server que responde segun `handler(req, n)` donde `n` es el numero
@@ -175,4 +175,101 @@ test("extractJSON tolera prosa alrededor y bloques de codigo", () => {
   assert.deepEqual(extractJSON('aca va: {"a":1} y listo'), { a: 1 });
   assert.deepEqual(extractJSON("```json\n[1,2]\n```"), [1, 2]);
   assert.equal(extractJSON("sin json"), undefined);
+});
+
+test("runClaudeChat manda el historial entero y lo devuelve con la respuesta agregada", async () => {
+  const api = await fakeApi((res, n) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(ok(n === 1 ? "primera" : "segunda"));
+  });
+  try {
+    const opts = { model: "MiniMax-M3", apiKey: "k", baseUrl: api.baseUrl };
+    const r1 = await runClaudeChat([{ role: "user", content: "hola" }], opts);
+    assert.equal(r1.text, "primera");
+    assert.deepEqual(r1.mensajes, [
+      { role: "user", content: "hola" },
+      { role: "assistant", content: "primera" },
+    ]);
+    // La vuelta siguiente lleva todo lo anterior: el modelo ve lo que dijo.
+    const r2 = await runClaudeChat([...r1.mensajes, { role: "user", content: "y ahora?" }], opts);
+    assert.equal(r2.text, "segunda");
+    assert.equal(r2.mensajes.length, 4);
+    assert.deepEqual(
+      api.calls[1].body.messages.map((m) => m.role),
+      ["user", "assistant", "user"],
+    );
+    assert.equal(api.calls[1].body.messages[1].content, "primera");
+    // el costo se calcula igual que en runClaude
+    assert.equal(typeof r2.costUsd, "number");
+  } finally {
+    await api.close();
+  }
+});
+
+test("conArchivos con cache marca la seccion de archivos como prefijo cacheable", async () => {
+  const api = await fakeApi((res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(ok("ok"));
+  });
+  try {
+    const contenido = conArchivos("arregla esto", { "frame.md": "# frame" }, { cache: true });
+    assert.ok(Array.isArray(contenido));
+    assert.deepEqual(contenido[0].cache_control, { type: "ephemeral" });
+    assert.match(contenido[0].text, /<<<BCA_FILE path="frame\.md">>>/);
+    assert.equal(contenido[1].text, "arregla esto");
+    // sin cache es el mismo texto, en un solo string
+    assert.equal(conArchivos("arregla esto", { "frame.md": "# frame" }), contenido[0].text + contenido[1].text);
+
+    await runClaudeChat([{ role: "user", content: contenido }], { model: "MiniMax-M3", apiKey: "k", baseUrl: api.baseUrl });
+    const enviado = api.calls[0].body.messages[0].content;
+    assert.ok(Array.isArray(enviado) && enviado[0].cache_control?.type === "ephemeral", "el bloque viaja tal cual");
+  } finally {
+    await api.close();
+  }
+});
+
+test("si el endpoint rechaza cache_control con un 400, se reintenta sin la marca y sin gastar reintentos", async () => {
+  const api = await fakeApi((res, n) => {
+    if (n === 1) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ error: { message: "unknown field: cache_control" } }));
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(ok("sin cache"));
+  });
+  try {
+    const contenido = conArchivos("p", { "a.txt": "x" }, { cache: true });
+    const r = await runClaudeChat([{ role: "user", content: contenido }], {
+      model: "MiniMax-M3",
+      apiKey: "k",
+      baseUrl: api.baseUrl,
+      retries: 0, // el fallback no cuenta como reintento
+    });
+    assert.equal(r.text, "sin cache");
+    assert.equal(api.calls.length, 2);
+    assert.equal(typeof api.calls[1].body.messages[0].content, "string", "vuelve a un string plano");
+    assert.match(api.calls[1].body.messages[0].content, /<<<BCA_FILE path="a\.txt">>>/);
+  } finally {
+    await api.close();
+  }
+});
+
+test("un 400 que no habla de cache_control sigue siendo un error del prompt", async () => {
+  const api = await fakeApi((res) => {
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "max_tokens too large" } }));
+  });
+  try {
+    await assert.rejects(
+      runClaudeChat([{ role: "user", content: conArchivos("p", { "a.txt": "x" }, { cache: true }) }], {
+        model: "MiniMax-M3",
+        apiKey: "k",
+        baseUrl: api.baseUrl,
+      }),
+      /minimax respondio 400/,
+    );
+    assert.equal(api.calls.length, 1);
+  } finally {
+    await api.close();
+  }
 });

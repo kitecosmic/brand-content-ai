@@ -10,6 +10,14 @@
 // por su cuenta. Por eso los callers inlinean lo que necesita via `opts.files`
 // (label -> contenido) y el wrapper lo mete en el prompt antes de enviarlo.
 //
+// Dos formas de hablarle:
+//   runClaude(prompt, opts)        una pregunta, una respuesta.
+//   runClaudeChat(mensajes, opts)  una conversacion: recibe el historial y lo
+//                                  devuelve con la respuesta agregada, para que
+//                                  el caller pueda seguir hablando (la reparacion
+//                                  de composiciones itera asi: el modelo escribe,
+//                                  ve el resultado del check, y ajusta).
+//
 // Los nombres `runClaude` / `runClaudeJSON` / `ClaudeError` son deuda heredada:
 // el backend es MiniMax. Renombrarlos esta anotado en SPEC-reparacion.md.
 
@@ -36,6 +44,8 @@ export class ClaudeError extends Error {
  * @param {string} [opts.systemPrompt]     - system prompt (campo `system` del request)
  * @param {number} [opts.timeoutMs]        - timeout total; default cfg.minimax.timeoutMs
  * @param {object} [opts.files]            - { label: contenido } a inlinear como seccion
+ * @param {boolean} [opts.cacheFiles]      - marcar la seccion de archivos como prefijo
+ *                                           cacheable (`cache_control`); ver conArchivos
  * @param {string} [opts.apiKey]           - override; default cfg.secrets.minimaxApiKey
  * @param {string} [opts.baseUrl]          - override; default cfg.minimax.baseUrl
  * @param {string} [opts.anthropicVersion] - override; default cfg.minimax.anthropicVersion
@@ -44,6 +54,31 @@ export class ClaudeError extends Error {
  * @returns {Promise<{ text, costUsd, ms, model, sessionId, inputTokens, outputTokens, cacheReadTokens, stopReason, raw }>}
  */
 export async function runClaude(prompt, opts = {}) {
+  const contenido = conArchivos(prompt, opts.files, { cache: opts.cacheFiles });
+  return enviarMensajes([{ role: "user", content: contenido }], opts);
+}
+
+/**
+ * Una vuelta mas de una conversacion.
+ *
+ * `mensajes` es el historial completo (`[{ role, content }]`, el ultimo del
+ * usuario) y la respuesta trae `mensajes` con el turno del asistente agregado,
+ * listo para volver a mandar. El costo, los reintentos y el timeout son los
+ * mismos de `runClaude`: la unica diferencia es que el modelo ve lo que dijo y
+ * lo que le contestaron en las vueltas anteriores.
+ *
+ * El primer mensaje puede armarse con `conArchivos(prompt, files, { cache })`
+ * para inlinear archivos igual que en `runClaude`.
+ */
+export async function runClaudeChat(mensajes, opts = {}) {
+  if (!Array.isArray(mensajes) || mensajes.length === 0) {
+    throw new ClaudeError("runClaudeChat necesita al menos un mensaje");
+  }
+  const res = await enviarMensajes(mensajes, opts);
+  return { ...res, mensajes: [...mensajes, { role: "assistant", content: res.text }] };
+}
+
+async function enviarMensajes(mensajes, opts = {}) {
   const cfg = loadConfig();
   const minia = cfg.minimax ?? {};
   const apiKey = opts.apiKey ?? cfg.secrets?.minimaxApiKey ?? "";
@@ -64,11 +99,10 @@ export async function runClaude(prompt, opts = {}) {
     throw new ClaudeError("falta opts.model: cada llamada elige su modelo desde cfg.models");
   }
 
-  const finalPrompt = assemblePrompt(prompt, opts.files);
   const body = {
     model: String(opts.model),
     max_tokens: maxTokens,
-    messages: [{ role: "user", content: finalPrompt }],
+    messages: mensajes.map((m) => ({ role: m.role, content: m.content })),
   };
   if (opts.systemPrompt) body.system = String(opts.systemPrompt);
 
@@ -84,6 +118,7 @@ export async function runClaude(prompt, opts = {}) {
   // lo que ya habia salido bien.
   let response;
   let rawText;
+  let sinCache = false;
   for (let attempt = 0; ; attempt++) {
     try {
       ({ response, rawText } = await postJson(url, body, { apiKey, version, timeoutMs }));
@@ -94,6 +129,15 @@ export async function runClaude(prompt, opts = {}) {
       continue;
     }
     if (response.ok) break;
+    // `cache_control` es una optimizacion, no un requisito. Si el endpoint no lo
+    // entiende (un 400 que lo nombra), se manda lo mismo sin la marca: perder
+    // el cache es barato; perder la llamada entera no. No cuenta como reintento.
+    if (response.status === 400 && !sinCache && tieneCacheControl(body) && /cache_control/i.test(rawText ?? "")) {
+      sinCache = true;
+      body.messages = body.messages.map((m) => ({ role: m.role, content: sinCacheControl(m.content) }));
+      attempt--;
+      continue;
+    }
     const retriable = response.status === 429 || response.status >= 500;
     if (!retriable || attempt >= retries) break;
     await sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
@@ -134,12 +178,6 @@ export async function runClaude(prompt, opts = {}) {
   const model = payload?.model ?? opts.model ?? null;
   const sessionId = payload?.id ?? null;
   const stopReason = payload?.stop_reason ?? payload?.stopReason ?? null;
-
-  if (stopReason === "max_tokens") {
-    // No es un fallo duro, pero el modelo se quedo corto: lo dejo registrado
-    // para que el caller decida. La salida parcial sigue siendo usable en la
-    // mayoria de los casos (parseo de JSON falla mas a menudo que la accion).
-  }
 
   return {
     text,
@@ -241,15 +279,24 @@ export function extractJSON(text) {
 }
 
 // ---------------------------------------------------------------------------
-// Internos
+// Armado del mensaje del usuario
 // ---------------------------------------------------------------------------
 
 /**
- * Inyecta los archivos como una seccion visible al modelo, claramente separada
- * del prompt. Cada archivo aparece delimitado por marcadores que no se confunden
- * con HTML (clave en compose, donde el modelo escribe HTML inline).
+ * El contenido de un mensaje del usuario con archivos inlineados adelante,
+ * claramente separados del prompt. Cada archivo aparece delimitado por
+ * marcadores que no se confunden con HTML (clave en compose, donde el modelo
+ * escribe HTML inline).
+ *
+ * Sin archivos devuelve el prompt tal cual. Con archivos devuelve un string, o
+ * —con `cache`— dos bloques de contenido: la seccion de archivos marcada con
+ * `cache_control` y el prompt aparte. Eso le dice al endpoint que el prefijo
+ * (frame.md, la composicion de referencia, las escenas) se va a repetir; en una
+ * conversacion de varias vueltas es lo que hace que la vuelta N no vuelva a
+ * pagar precio de entrada por todo lo de la vuelta 1. Si el endpoint no lo
+ * soporta, `runClaude` lo reintenta sin la marca (ver enviarMensajes).
  */
-function assemblePrompt(prompt, files) {
+export function conArchivos(prompt, files, { cache = false } = {}) {
   const entries = files && typeof files === "object" ? Object.entries(files) : [];
   if (entries.length === 0) return prompt;
 
@@ -265,16 +312,35 @@ function assemblePrompt(prompt, files) {
     })
     .join("\n\n");
 
-  return [
+  const cabecera = [
     "You have been given the following files inline. Read them as if they were on disk; do not call any tools.",
     "",
     blocks,
     "",
     "---",
     "",
-    prompt,
   ].join("\n");
+
+  if (!cache) return cabecera + prompt;
+  return [
+    { type: "text", text: cabecera, cache_control: { type: "ephemeral" } },
+    { type: "text", text: prompt },
+  ];
 }
+
+function tieneCacheControl(body) {
+  return body.messages.some((m) => Array.isArray(m.content) && m.content.some((b) => b && b.cache_control));
+}
+
+function sinCacheControl(content) {
+  if (!Array.isArray(content)) return content;
+  // De vuelta a un string: es lo que el endpoint seguro entiende.
+  return content.map((b) => (b && typeof b.text === "string" ? b.text : "")).join("");
+}
+
+// ---------------------------------------------------------------------------
+// Internos
+// ---------------------------------------------------------------------------
 
 function extractAssistantText(payload) {
   const content = Array.isArray(payload?.content) ? payload.content : [];
