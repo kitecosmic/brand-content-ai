@@ -185,7 +185,7 @@ test("el signo de pregunta de la barra lleva al mapa desde cualquier pantalla", 
   );
   for (const ruta of ["/crear", "/calendario", "/marcas"]) {
     const html = await (await get(ruta, cookie)).text();
-    assert.match(html, /class="ayuda[^"]*" href="\/empezar"/, `falta la ayuda en ${ruta}`);
+    assert.match(html, /class="ayuda-boton[^"]*" href="\/empezar"/, `falta la ayuda en ${ruta}`);
   }
   // Y no ocupa una pestana: el mapa no es una seccion mas del panel.
   assert.doesNotMatch(

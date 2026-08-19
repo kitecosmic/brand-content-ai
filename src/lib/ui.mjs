@@ -331,7 +331,7 @@ function barra({ activa, marcas, marcaActiva, tab, usuario, faltaEmpezar }) {
     </nav>
 
     <div class="cabecera-fin">
-      <a class="ayuda${tab === "empezar" ? " activo" : ""}${faltaEmpezar ? " pendiente" : ""}" href="/empezar" title="Cómo empezar: los pasos y dónde se hace cada uno" aria-label="Cómo empezar">?</a>
+      <a class="ayuda-boton${tab === "empezar" ? " activo" : ""}${faltaEmpezar ? " pendiente" : ""}" href="/empezar" title="Cómo empezar: los pasos y dónde se hace cada uno" aria-label="Cómo empezar">?</a>
       <button type="button" class="tema" data-tema-toggle data-libre="1" title="Cambiar entre el tema de la marca, claro y oscuro">
         <span data-tema-nombre></span>
       </button>
@@ -443,14 +443,18 @@ body{
 .tema:hover{border-color:var(--line-fuerte);color:var(--ink)}
 /* El signo de pregunta: la guia de como empezar, siempre a mano y sin ocupar una
    pestana. Con algo pendiente lleva un punto, que es como se pide atencion sin
-   gritar. */
-.ayuda{
+   gritar.
+
+   Se llama ayuda-boton y no ayuda porque la clase .ayuda ya existe hace rato:
+   es el texto chico debajo de un campo de formulario. Pisarla convertia cada
+   uno de esos textos en un circulo de 26px con las palabras encimadas. */
+.ayuda-boton{
   width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
   border:1px solid var(--line);color:var(--muted);text-decoration:none;
-  font-size:13px;font-weight:600;position:relative;
+  font-size:13px;font-weight:600;position:relative;flex:none;
 }
-.ayuda:hover,.ayuda.activo{border-color:var(--line-fuerte);color:var(--ink)}
-.ayuda.pendiente::after{
+.ayuda-boton:hover,.ayuda-boton.activo{border-color:var(--line-fuerte);color:var(--ink)}
+.ayuda-boton.pendiente::after{
   content:"";position:absolute;top:-1px;right:-1px;width:7px;height:7px;
   border-radius:50%;background:var(--accent);border:1.5px solid var(--bg);
 }
