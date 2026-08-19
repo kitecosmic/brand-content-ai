@@ -708,6 +708,33 @@ ${
 }
 
 /** Cartel de "falta lo mínimo para trabajar", con el link para resolverlo. */
+/**
+ * La marca existe pero todavia no leyo sus fuentes.
+ *
+ * Generar sin hechos sincronizados se niega a proposito —lo que se publica tiene
+ * que salir de algo verificado— y hasta ahora eso se descubria apretando
+ * "Crear ahora" y viendo fallar la pieza. El sistema ya sabia que iba a fallar
+ * antes de empezar; decirlo con el boton al lado cuesta un click en vez de un
+ * intento.
+ */
+export function avisoSinConocimiento(brand) {
+  return `<div class="aviso">
+    <div class="entre" style="gap:14px;align-items:flex-start">
+      <div>
+        <strong>Falta leer las fuentes de ${esc(brand.name)}.</strong>
+        Todo lo que se publica tiene que salir de un hecho verificado, así que
+        generar sin esto se niega. Se lee el sitio una vez y quedan sus hechos
+        citables; tarda un minuto.
+      </div>
+      <form method="post" action="/action/sync">
+        <input type="hidden" name="brand" value="${esc(brand.id)}">
+        <input type="hidden" name="back" value="/crear">
+        <button class="primario" type="submit" data-esperando="leyendo el sitio...">Leer sus fuentes</button>
+      </form>
+    </div>
+  </div>`;
+}
+
 export function avisoSinModelo() {
   return `<div class="aviso mal">
     <strong>Falta la API key del modelo.</strong> Sin eso ${PRODUCTO} no puede escribir ni componer nada.

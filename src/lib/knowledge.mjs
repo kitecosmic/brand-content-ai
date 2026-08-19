@@ -262,7 +262,7 @@ function buildSourcePrompt(cfg, store, source, texto) {
  *
  * @returns {Promise<Array<object>>}
  */
-export async function syncAll(cfg, store, { log, force = false, brandId = null } = {}) {
+export async function syncAll(cfg, store, { log, force = false, brandId = null, deps = {} } = {}) {
   const say = typeof log === "function" ? log : () => {};
 
   // Las fuentes de la marca mandan: son las que se dieron de alta al crearla
@@ -274,7 +274,7 @@ export async function syncAll(cfg, store, { log, force = false, brandId = null }
 
   for (const fuente of fuentes.filter((f) => f.kind !== "repo")) {
     try {
-      results.push(await syncSource(cfg, store, fuente, { log, force }));
+      results.push(await syncSource(cfg, store, fuente, { log, force, deps }));
     } catch (err) {
       const message = err?.message ?? String(err);
       say(`[knowledge] ${fuente.source_id}: FALLO — ${message}`);

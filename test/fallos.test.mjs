@@ -117,3 +117,33 @@ test("no se puede usar el descarte para borrar cualquier cosa de la base", async
     "solo se borran claves de tareas",
   );
 });
+
+test("Crear avisa que faltan las fuentes en vez de dejar fallar la pieza", async () => {
+  // Una marca recien creada tiene su sitio como fuente, pero sin sincronizar.
+  store.upsertBrand({ id: "keio", name: "Keio", palette: {}, languages: ["es"] });
+  store.addSource({
+    brandId: "keio",
+    sourceId: "keio:site",
+    kind: "url",
+    ref: "https://keio.example/",
+    label: "keio.example",
+  });
+  store.setDefaultBrand("keio");
+
+  const html = await ver("/crear");
+  assert.match(html, /Falta leer las fuentes de Keio/, "lo dice antes de que gastes el intento");
+  assert.match(html, /action="\/action\/sync"/, "y con el boton para resolverlo ahi mismo");
+
+  // Con los hechos ya sincronizados, el aviso no molesta mas.
+  store.putKnowledge({
+    sourceId: "keio:site",
+    brandId: "keio",
+    kind: "url",
+    ref: "https://keio.example/",
+    label: "keio.example",
+    fingerprint: "abc",
+    digest: "Keio vende eSIM.",
+    facts: [{ claim: "Se activa en cinco minutos", source: "https://keio.example/" }],
+  });
+  assert.doesNotMatch(await ver("/crear"), /Falta leer las fuentes/, "sincronizada, el aviso se va");
+});

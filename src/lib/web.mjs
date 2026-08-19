@@ -44,6 +44,7 @@ import { STATUSES } from "./store.mjs";
 import { esc, fuentesDeMarca, pagina, TEMAS } from "./ui.mjs";
 import {
   ETIQUETA_ESTADO,
+  avisoSinConocimiento,
   avisoSinModelo,
   faseTexto,
   vistaAjustes,
@@ -342,8 +343,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       .map((j) => ({ ...j, angle: store.getItem(j.item_id)?.angle }))
       .filter((j) => j.angle);
     const ahora = loadConfig();
+    // Generar exige hechos sincronizados. Saberlo aca evita el intento que
+    // falla y deja el boton de resolverlo al lado del aviso.
+    const sinHechos = brand && !store.allKnowledge(brand.id).some((f) => f.digest);
     const cuerpo =
       (modeloConfigurado(ahora) ? "" : avisoSinModelo()) +
+      (sinHechos && !running.has(`__sync:${brand.id}`) ? avisoSinConocimiento(brand) : "") +
       vistaCrear({
         cfg,
         brand,
