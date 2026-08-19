@@ -10,7 +10,7 @@ no se tocan** — se consumen tal cual estan.
 - ESM (`.mjs`), `import`/`export`. Nada de CommonJS.
 - Windows es el entorno primario: rutas con `node:path`, nunca concatenar con `/`.
 - Todo lo que persiste va por `Store`. Nada de estado en memoria entre procesos.
-- Todo lo que llama al modelo va por `runClaude` / `runClaudeJSON`. El wrapper
+- Todo lo que llama al modelo va por `runModelo` / `runModeloJSON`. El wrapper
   habla contra `cfg.minimax.baseUrl/messages` con la cabecera `anthropic-version`
   (`baseUrl` = endpoint Anthropic-compatible: `https://api.minimax.io/anthropic/v1`,
   o `https://api.minimaxi.com/anthropic/v1` para keys de China continental);
@@ -106,10 +106,10 @@ activa las reglas de safe area para los lienzos mas altos que anchos.
 Estados validos de un item, en orden:
 `planned -> briefed -> building -> built -> delivered -> approved | rejected`
 
-### `src/lib/claude.mjs`
+### `src/lib/modelo.mjs`
 
 ```js
-runClaude(prompt, {
+runModelo(prompt, {
   model?, systemPrompt?, timeoutMs?,
   files?: Record<label, contenido>,   // inlinado en el prompt; no hay tools de filesystem
   apiKey?, baseUrl?, anthropicVersion?, maxTokens?,   // overrides de cfg.minimax
@@ -123,12 +123,12 @@ runClaude(prompt, {
     raw                   // payload completo
   }
 
-runClaudeJSON(prompt, opts)   // igual, mas { data } ya parseado; reintenta 1 vez
+runModeloJSON(prompt, opts)   // igual, mas { data } ya parseado; reintenta 1 vez
 
 // Conversacion: recibe el historial ([{ role, content }], el ultimo del usuario)
-// y devuelve lo mismo que runClaude mas `mensajes` con el turno del asistente
+// y devuelve lo mismo que runModelo mas `mensajes` con el turno del asistente
 // agregado, listo para seguir. Mismo costo, reintentos y timeout.
-runClaudeChat(mensajes, opts)
+runModeloChat(mensajes, opts)
 
 // El contenido de un mensaje del usuario con archivos inlineados adelante. Con
 // { cache: true } devuelve dos bloques y el de archivos lleva
@@ -137,10 +137,10 @@ runClaudeChat(mensajes, opts)
 // reintenta una vez sin la marca; nunca falla una llamada por eso.
 conArchivos(prompt, files, { cache? }) -> string | [{ type: "text", text, cache_control? }]
 
-// Ante 429 / 5xx / cortes de red, runClaude reintenta solo (opts.retries, 2 por
+// Ante 429 / 5xx / cortes de red, runModelo reintenta solo (opts.retries, 2 por
 // defecto) respetando `retry-after`. El timeout NO se reintenta.
 extractJSON(text) -> any | undefined
-ClaudeError                    // .status, .body, .cause
+ModeloError                    // .status, .body, .cause
 ```
 
 La API Anthropic-compatible de MiniMax NO expone herramientas de filesystem:
@@ -260,7 +260,7 @@ export async function generatePending(cfg, store, { limit, brandId, log } = {}) 
 export const RETRIABLE_PHASES   // que fases vale la pena repetir
 ```
 
-**`check` y su reparacion.** Es una conversacion (`runClaudeChat`), no una
+**`check` y su reparacion.** Es una conversacion (`runModeloChat`), no una
 llamada suelta por parche:
 
 - `summarizeCheck(res)` devuelve `{ findings, bloqueantes, secundarios, texto }`.

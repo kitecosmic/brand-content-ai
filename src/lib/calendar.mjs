@@ -16,7 +16,7 @@
 // al modelo es `planCalendar`.
 
 import { addDays, slugify, today, withBrand } from "./config.mjs";
-import { runClaudeJSON } from "./claude.mjs";
+import { runModeloJSON } from "./modelo.mjs";
 import { knowledgeContext } from "./knowledge.mjs";
 
 // Palabras vacias (en/es/pt) que no cuentan al comparar dos angulos.
@@ -106,9 +106,9 @@ async function planCalendarInner(cfg, store, { days = 14, from, log, brandId } =
     const started = Date.now();
     let res;
     try {
-      res = await runClaudeJSON(prompt, {
+      res = await runModeloJSON(prompt, {
         model: cfg?.models?.plan,
-        timeoutMs: cfg?.limits?.claudeTimeoutMs,
+        timeoutMs: cfg?.limits?.modelTimeoutMs,
         systemPrompt: brandSystemPrompt(cfg),
       });
     } catch (err) {

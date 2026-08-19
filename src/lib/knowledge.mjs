@@ -16,7 +16,7 @@ import { resolve, join, relative, sep } from "node:path";
 
 import { createHash } from "node:crypto";
 
-import { runClaudeJSON } from "./claude.mjs";
+import { runModeloJSON } from "./modelo.mjs";
 import { readSite } from "./site.mjs";
 
 const GIT_TIMEOUT_MS = 30_000;
@@ -79,9 +79,9 @@ export async function syncRepo(cfg, store, repoConfig, opts = {}) {
 
   const model = cfg?.models?.digest;
   const files = collectRepoFiles(repoPath, repoConfig.include);
-  const res = await runClaudeJSON(buildPrompt(cfg, repoConfig, repoPath, headSha, files), {
+  const res = await runModeloJSON(buildPrompt(cfg, repoConfig, repoPath, headSha, files), {
     model,
-    timeoutMs: cfg?.limits?.claudeTimeoutMs ?? 900_000,
+    timeoutMs: cfg?.limits?.modelTimeoutMs ?? 900_000,
     systemPrompt: SYSTEM_PROMPT,
     files,
   });
@@ -138,7 +138,7 @@ export async function syncRepo(cfg, store, repoConfig, opts = {}) {
 export async function syncSource(cfg, store, source, { log, force = false, deps = {} } = {}) {
   const say = typeof log === "function" ? log : () => {};
   const leerSitio = deps.readSite ?? readSite;
-  const llamar = deps.runClaudeJSON ?? runClaudeJSON;
+  const llamar = deps.runModeloJSON ?? runModeloJSON;
   const etiqueta = source.label ?? source.source_id;
 
   let texto = "";
@@ -162,7 +162,7 @@ export async function syncSource(cfg, store, source, { log, force = false, deps 
 
   const res = await llamar(buildSourcePrompt(cfg, store, source, texto), {
     model: cfg?.models?.digest,
-    timeoutMs: cfg?.limits?.claudeTimeoutMs ?? 900_000,
+    timeoutMs: cfg?.limits?.modelTimeoutMs ?? 900_000,
     systemPrompt: SYSTEM_PROMPT_WEB,
   });
 

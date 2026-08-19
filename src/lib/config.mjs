@@ -180,6 +180,13 @@ export function loadConfig() {
     pricing: m.pricing && typeof m.pricing === "object" ? m.pricing : {},
   };
 
+  // limits.claudeTimeoutMs se llama modelTimeoutMs desde que el wrapper dejo de
+  // llamarse claude.mjs. Una config local escrita antes lo sigue trayendo con
+  // el nombre viejo: se respeta, y el nuevo gana si estan los dos.
+  if (cfg.limits && typeof cfg.limits === "object" && cfg.limits.modelTimeoutMs == null && cfg.limits.claudeTimeoutMs != null) {
+    cfg.limits.modelTimeoutMs = cfg.limits.claudeTimeoutMs;
+  }
+
   cached = cfg;
   return cfg;
 }

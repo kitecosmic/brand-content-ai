@@ -1,7 +1,7 @@
 // Tests de generate.mjs.
 //
 // Nada de esto llama al modelo ni abre un Chrome: las dependencias caras
-// (runClaude, runClaudeJSON, el CLI de hyperframes, ffmpeg) se inyectan.
+// (runModelo, runModeloJSON, el CLI de hyperframes, ffmpeg) se inyectan.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -223,7 +223,7 @@ function videoBrief(n = 6) {
   };
 }
 
-/** Stub de runClaude que finge ser el modelo: emite los HTML en fences.
+/** Stub de runModelo que finge ser el modelo: emite los HTML en fences.
  *  El wrapper real espera ```html\n<relpath>\n<body>\n```, uno por archivo.
  */
 function composerStub(calls) {
@@ -274,7 +274,7 @@ test("generatePending descarta items con formato invalido sin tocarlos", async (
 
   const res = await generatePending(cfg, store, {
     limit: 10,
-    deps: { runClaudeJSON: async () => ({ data: TEXT_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }) },
+    deps: { runModeloJSON: async () => ({ data: TEXT_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }) },
   });
   assert.deepEqual(res.map((r) => r.itemId), ["a-ok"]);
   assert.equal(store.getItem("b-bad").status, "planned");
@@ -323,7 +323,7 @@ test("generateItem manda el feedback al modelo, no solo lo guarda", async () => 
   const prompts = [];
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async (prompt) => {
+      runModeloJSON: async (prompt) => {
         prompts.push(prompt);
         return {
           data: { ...TEXT_BRIEF, feedback_addressed: "Saque los adjetivos y puse el hecho de pgvector citado del README." },
@@ -532,7 +532,7 @@ test("si falla el brief el item vuelve a planned con error y nunca pasa por buil
   await assert.rejects(
     generateItem(cfg, store, item.id, {
       deps: {
-        runClaudeJSON: async () => {
+        runModeloJSON: async () => {
           throw new Error("el modelo se cayo");
         },
       },
@@ -556,7 +556,7 @@ test("si el brief no valida dos veces, el item vuelve a planned con el motivo", 
   await assert.rejects(
     generateItem(cfg, store, item.id, {
       deps: {
-        runClaudeJSON: async () => {
+        runModeloJSON: async () => {
           calls++;
           return { data: carouselBrief(3), costUsd: 0.1, ms: 1, model: "stub" };
         },
@@ -575,7 +575,7 @@ test("si el brief no valida dos veces, el item vuelve a planned con el motivo", 
 // ---------------------------------------------------------------------------
 
 /**
- * Stub de runClaudeChat: un modelo razonable. Reescribe los archivos que el
+ * Stub de runModeloChat: un modelo razonable. Reescribe los archivos que el
  * ultimo mensaje marca con "<- has a blocking error" (o lo que diga `elegir`)
  * y devuelve el historial con su turno agregado, como el wrapper real.
  */
@@ -659,9 +659,9 @@ test("check: la primera reparacion apunta al archivo con el error bloqueante, no
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub(composeCalls),
-      runClaudeChat: async (mensajes, opts) => {
+      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub(composeCalls),
+      runModeloChat: async (mensajes, opts) => {
         const r = await chatStub(chatCalls)(mensajes, opts);
         escritos.push(...[...r.text.matchAll(/^(compositions\/frames\/[\w.-]+\.html)$/gm)].map((m) => m[1]));
         return r;
@@ -700,9 +700,9 @@ test("check: el modelo ve el resultado de su arreglo en la misma conversacion y 
 
   await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub(composeCalls),
-      runClaudeChat: chatStub(chatCalls),
+      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub(composeCalls),
+      runModeloChat: chatStub(chatCalls),
       hyperframes: hyperframesStub(cliCalls, [
         () => checkFail({ file: "compositions/frames/03-slide-role-3.html" }),
         // el arreglo destapo otro error en otro archivo: es avance, no repeticion
@@ -737,9 +737,9 @@ test("check: la misma firma escala — repara, avisa que sobrevivio, recompone l
 
   const err = await generateWithRetry(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub(composeCalls),
-      runClaudeChat: chatStub(chatCalls),
+      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub(composeCalls),
+      runModeloChat: chatStub(chatCalls),
       // Siempre el mismo error, mismo selector, mismo t.
       hyperframes: hyperframesStub(cliCalls, [() => checkFail({ warnings: 2 })]),
     },
@@ -789,9 +789,9 @@ test("check: la historia de firmas se borra cuando el check pasa", async () => {
   const dir = join(cfg.hyperframes.projectsDir, item.id);
   await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub([]),
-      runClaudeChat: chatStub([]),
+      runModeloJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub([]),
+      runModeloChat: chatStub([]),
       hyperframes: hyperframesStub([], [() => checkFail({ file: "compositions/frames/01-one-line-on-an-ink-black-fie.html" }), CHECK_OK]),
     },
   });
@@ -808,10 +808,10 @@ test("check: si el modelo no devuelve archivos se le reclama sin volver a correr
 
   await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub([]),
+      runModeloJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub([]),
       // Primera vuelta: prosa sin fences. Segunda: el archivo.
-      runClaudeChat: chatStub(chatCalls, { elegir: (texto) => (++vuelta === 1 ? [] : ["compositions/frames/01-one-line-on-an-ink-black-fie.html"]) }),
+      runModeloChat: chatStub(chatCalls, { elegir: (texto) => (++vuelta === 1 ? [] : ["compositions/frames/01-one-line-on-an-ink-black-fie.html"]) }),
       hyperframes: hyperframesStub(cliCalls, [() => checkFail({ file: "compositions/frames/01-one-line-on-an-ink-black-fie.html" }), CHECK_OK]),
     },
   });
@@ -834,9 +834,9 @@ test("check: agotar las vueltas falla con fase check, que si se reintenta reusan
 
   const err = await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub(composeCalls),
-      runClaudeChat: chatStub(chatCalls),
+      runModeloJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub(composeCalls),
+      runModeloChat: chatStub(chatCalls),
       // Cada check se queja de algo distinto: hay avance, pero no alcanza.
       hyperframes: hyperframesStub(cliCalls, [() => checkFail({ file: `compositions/frames/0${(n++ % 6) + 1}-slide-role-${((n - 1) % 6) + 1}.html`, selector: `#s${n}` })]),
     },
@@ -881,10 +881,10 @@ test("generateWithRetry reintenta un fallo de compose y no uno de brief", async 
 
   const res = await generateWithRetry(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
+      runModeloJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
       // El primer compose no devuelve nada parseable: falla en fase compose y
       // el segundo intento tiene que salir solo.
-      runClaude: async (prompt, opts) => {
+      runModelo: async (prompt, opts) => {
         intentos += 1;
         if (intentos === 1) return { text: "perdon, no puedo", costUsd: 0.01, ms: 1, model: "stub" };
         return composerStub(composeCalls)(prompt, opts);
@@ -909,7 +909,7 @@ test("generateWithRetry reintenta un fallo de compose y no uno de brief", async 
   await assert.rejects(
     generateWithRetry(cfg, store, otro.id, {
       deps: {
-        runClaudeJSON: async () => {
+        runModeloJSON: async () => {
           briefs += 1;
           throw new Error("boom en el brief");
         },
@@ -929,7 +929,7 @@ test("generatePending rescata lo colgado antes de empezar y un fallo no aborta e
   const res = await generatePending(cfg, store, {
     limit: 10,
     deps: {
-      runClaudeJSON: async (prompt) => {
+      runModeloJSON: async (prompt) => {
         if (prompt.includes("id: b")) throw new Error("boom en b");
         return { data: TEXT_BRIEF, costUsd: 0.1, ms: 1, model: "stub" };
       },
@@ -956,7 +956,7 @@ test("generatePending respeta limit y maxConcurrentGenerations", async () => {
   const res = await generatePending(cfg, store, {
     limit: 3,
     deps: {
-      runClaudeJSON: async () => {
+      runModeloJSON: async () => {
         live++;
         peak = Math.max(peak, live);
         await new Promise((r) => setTimeout(r, 15));
@@ -980,7 +980,7 @@ test("generatePending salta los items que superaron maxRegenerationsPerItem", as
   const res = await generatePending(cfg, store, {
     limit: 10,
     deps: {
-      runClaudeJSON: async () => {
+      runModeloJSON: async () => {
         throw new Error("no deberia llamarse");
       },
     },
@@ -997,7 +997,7 @@ test("text: el brief es el entregable y preview_path nunca queda vacio", async (
   const item = addItem(store, { format: "text" });
 
   const res = await generateItem(cfg, store, item.id, {
-    deps: { runClaudeJSON: async () => ({ data: TEXT_BRIEF, costUsd: 0.11, ms: 1, model: "stub" }) },
+    deps: { runModeloJSON: async () => ({ data: TEXT_BRIEF, costUsd: 0.11, ms: 1, model: "stub" }) },
   });
 
   assert.ok(res.assetPath.endsWith("post.md"));
@@ -1026,8 +1026,8 @@ test("carousel: un PNG por slide, preview en el primero", async () => {
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: brief, costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub(composeCalls),
+      runModeloJSON: async () => ({ data: brief, costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub(composeCalls),
       hyperframes: async (_cfg, projectDir, args) => {
         cliCalls.push(args[0]);
         if (args[0] === "check") return { code: 0, stdout: '{"ok":true}', stderr: "" };
@@ -1065,8 +1065,8 @@ test("video: MP4 + frame de preview, y degrada con elegancia si no hay ffmpeg", 
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: videoBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub(composeCalls),
+      runModeloJSON: async () => ({ data: videoBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub(composeCalls),
       ffmpeg: async () => false, // ffmpeg ausente
       hyperframes: async (_cfg, projectDir, args) => {
         cliCalls.push(args[0]);
@@ -1099,8 +1099,8 @@ test("video: si no hay ni ffmpeg ni snapshot, preview_path cae en el propio MP4"
 
   const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: videoBrief(5), costUsd: 0.1, ms: 1, model: "stub" }),
-      runClaude: composerStub([]),
+      runModeloJSON: async () => ({ data: videoBrief(5), costUsd: 0.1, ms: 1, model: "stub" }),
+      runModelo: composerStub([]),
       ffmpeg: async () => false,
       hyperframes: async (_cfg, projectDir, args) => {
         if (args[0] === "check") return { code: 0, stdout: '{"ok":true}', stderr: "" };

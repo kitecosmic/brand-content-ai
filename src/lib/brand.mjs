@@ -19,7 +19,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { runClaudeJSON } from "./claude.mjs";
+import { runModeloJSON } from "./modelo.mjs";
 import { buildFontCss, familyExists } from "./fonts.mjs";
 import { readSite } from "./site.mjs";
 import { META_DIR, slugify } from "./config.mjs";
@@ -49,7 +49,7 @@ const PESOS_MONO = [400, 600];
 const CLAVES_PALETA = ["bg", "surface", "ink", "muted", "line", "accent", "onAccent"];
 
 export function defaultDeps() {
-  return { runClaudeJSON, readSite, buildFontCss, familyExists };
+  return { runModeloJSON, readSite, buildFontCss, familyExists };
 }
 
 // ---------------------------------------------------------------------------
@@ -644,9 +644,9 @@ export function renderReferenceComposition(brand) {
 
 async function proposeIdentity(cfg, { site, current, hints, name, colors, deps }) {
   const prompt = buildIdentityPrompt({ site, current, hints, name, colors });
-  const res = await deps.runClaudeJSON(prompt, {
+  const res = await deps.runModeloJSON(prompt, {
     model: cfg.models?.brief ?? cfg.models?.plan,
-    timeoutMs: cfg.limits?.claudeTimeoutMs,
+    timeoutMs: cfg.limits?.modelTimeoutMs,
   });
   const identity = res.data;
   if (!identity || typeof identity !== "object") {

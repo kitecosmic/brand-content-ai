@@ -206,8 +206,8 @@ async function doctor(cfg, store) {
   add("node >= 22.5", maj > 22 || (maj === 22 && min >= 5), `v${process.versions.node}`);
 
   try {
-    const { runClaude } = await import("./lib/claude.mjs");
-    const r = await runClaude("Respond with exactly one word: OK", {
+    const { runModelo } = await import("./lib/modelo.mjs");
+    const r = await runModelo("Respond with exactly one word: OK", {
       model: cfg.models.digest,
       timeoutMs: 120_000,
     });

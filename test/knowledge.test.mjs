@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Antes de importar el modulo: si algun test llamara al modelo por error, que
-// falle al instante en vez de gastar plata. claude.mjs valida la api key al
+// falle al instante en vez de gastar plata. modelo.mjs valida la api key al
 // armar la peticion, asi que un valor sentinel la hace reventar sin gastar.
 process.env.BCA_MINIMAX_API_KEY = "bca-test-sin-llamadas";
 

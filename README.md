@@ -369,7 +369,7 @@ src/cli.mjs           el unico lugar que imprime a consola
 src/lib/
   config.mjs          config + .env + utilidades de fecha
   store.mjs           SQLite: marcas, items, revisiones, fuentes, costos
-  claude.mjs          wrapper HTTP del backend MiniMax (formato Anthropic)
+  modelo.mjs          wrapper HTTP del backend MiniMax (formato Anthropic)
   brand.mjs           crear e iterar marcas: identidad, frame.md, proyecto base
   site.mjs            leer un sitio (texto, colores, tipografias) sin dependencias
   fonts.mjs           Google Fonts -> CSS con las fuentes embebidas en base64

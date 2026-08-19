@@ -36,7 +36,7 @@ import {
 } from "node:fs";
 import { join, sep, dirname, relative } from "node:path";
 
-import { conArchivos, extractJSON, runClaude, runClaudeChat, runClaudeJSON } from "./claude.mjs";
+import { conArchivos, extractJSON, runModelo, runModeloChat, runModeloJSON } from "./modelo.mjs";
 import { META_DIR, rutaMeta, slugify } from "./config.mjs";
 
 
@@ -105,9 +105,9 @@ export class GenerateError extends Error {
 
 export function defaultDeps() {
   return {
-    runClaude,
-    runClaudeChat,
-    runClaudeJSON,
+    runModelo,
+    runModeloChat,
+    runModeloJSON,
     hyperframes: runHyperframes,
     ffmpeg: extractFrame,
   };
@@ -1540,7 +1540,7 @@ export function killLiveChildren() {
 
 function execFile(bin, args, { cwd, timeoutMs, env } = {}) {
   return new Promise((resolve) => {
-    // Mismo criterio que claude.mjs: en Windows `npx` es un .cmd, asi que va por
+    // Mismo criterio que modelo.mjs: en Windows `npx` es un .cmd, asi que va por
     // `cmd.exe /c` con los argumentos como array. Nada de `shell: true`, que
     // concatena sin escapar (DEP0190) y convierte una ruta rara en inyeccion.
     const isWin = process.platform === "win32";
@@ -2020,9 +2020,9 @@ async function makeBrief(cfg, store, item, formatCfg, { log, deps, brand }) {
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const prompt = buildBriefPrompt({ cfg, brand, item, formatCfg, knowledge, complaint });
-    const res = await deps.runClaudeJSON(prompt, {
+    const res = await deps.runModeloJSON(prompt, {
       model: cfg.models?.brief,
-      timeoutMs: cfg.limits?.claudeTimeoutMs,
+      timeoutMs: cfg.limits?.modelTimeoutMs,
     });
     cost += res.costUsd ?? 0;
     store.logRun({
@@ -2104,9 +2104,9 @@ async function writeCompositions(cfg, store, item, formatCfg, brief, plan, proje
     });
     const files = gatherContextFiles(projectDir, plan, { includeExisting: false });
     try {
-      const res = await deps.runClaude(prompt, {
+      const res = await deps.runModelo(prompt, {
         model: cfg.models?.compose,
-        timeoutMs: cfg.limits?.claudeTimeoutMs,
+        timeoutMs: cfg.limits?.modelTimeoutMs,
         files,
       });
       const { files: answered, missing, skipped } = extractCompositions(res.text, {
@@ -2426,9 +2426,9 @@ async function checkAndRepair(cfg, store, item, formatCfg, brief, plan, projectD
     // Reparar es aplicar el dictamen del linter: va al modelo de repair (o al
     // de compose si no hay uno aparte). Es el mismo en toda la conversacion.
     store.beat(item.id, `repair ${turno}/${maxTurns}`);
-    const fix = await deps.runClaudeChat(mensajes, {
+    const fix = await deps.runModeloChat(mensajes, {
       model: cfg.models?.repair ?? cfg.models?.compose,
-      timeoutMs: cfg.limits?.claudeTimeoutMs,
+      timeoutMs: cfg.limits?.modelTimeoutMs,
     });
     mensajes = fix.mensajes ?? [...mensajes, { role: "assistant", content: fix.text }];
     tokens += (fix.inputTokens ?? 0) + (fix.outputTokens ?? 0) + (fix.cacheReadTokens ?? 0);

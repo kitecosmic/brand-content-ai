@@ -1163,9 +1163,9 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   /** Una llamada corta de verdad: la unica forma de saber si la key sirve. */
   async function probarModelo() {
     try {
-      const { runClaude } = await import("./claude.mjs");
+      const { runModelo } = await import("./modelo.mjs");
       const cfgAhora = loadConfig();
-      const r = await runClaude("Respond with exactly one word: OK", {
+      const r = await runModelo("Respond with exactly one word: OK", {
         model: cfgAhora.models?.digest ?? cfgAhora.models?.plan,
         timeoutMs: 60_000,
         retries: 0,

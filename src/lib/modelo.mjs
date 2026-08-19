@@ -11,22 +11,24 @@
 // (label -> contenido) y el wrapper lo mete en el prompt antes de enviarlo.
 //
 // Dos formas de hablarle:
-//   runClaude(prompt, opts)        una pregunta, una respuesta.
-//   runClaudeChat(mensajes, opts)  una conversacion: recibe el historial y lo
+//   runModelo(prompt, opts)        una pregunta, una respuesta.
+//   runModeloChat(mensajes, opts)  una conversacion: recibe el historial y lo
 //                                  devuelve con la respuesta agregada, para que
 //                                  el caller pueda seguir hablando (la reparacion
 //                                  de composiciones itera asi: el modelo escribe,
 //                                  ve el resultado del check, y ajusta).
 //
-// Los nombres `runClaude` / `runClaudeJSON` / `ClaudeError` son deuda heredada:
-// el backend es MiniMax. Renombrarlos esta anotado en SPEC-reparacion.md.
+// Este archivo se llamo claude.mjs (runClaude, ClaudeError) cuando el backend
+// era otro. El backend es MiniMax; los nombres ahora lo dicen. Lo que NO se
+// renombra es la cabecera `anthropic-version` ni la URL `.../anthropic/v1`:
+// eso es el protocolo que expone MiniMax, no una eleccion nuestra.
 
 import { loadConfig } from "./config.mjs";
 
-export class ClaudeError extends Error {
+export class ModeloError extends Error {
   constructor(message, { status, body, cause } = {}) {
     super(message);
-    this.name = "ClaudeError";
+    this.name = "ModeloError";
     this.status = status ?? null;
     this.body = body ?? null;
     this.cause = cause ?? null;
@@ -53,7 +55,7 @@ export class ClaudeError extends Error {
  * @param {number} [opts.retries]          - reintentos ante 429/5xx/red; default 2
  * @returns {Promise<{ text, costUsd, ms, model, sessionId, inputTokens, outputTokens, cacheReadTokens, stopReason, raw }>}
  */
-export async function runClaude(prompt, opts = {}) {
+export async function runModelo(prompt, opts = {}) {
   const contenido = conArchivos(prompt, opts.files, { cache: opts.cacheFiles });
   return enviarMensajes([{ role: "user", content: contenido }], opts);
 }
@@ -64,15 +66,15 @@ export async function runClaude(prompt, opts = {}) {
  * `mensajes` es el historial completo (`[{ role, content }]`, el ultimo del
  * usuario) y la respuesta trae `mensajes` con el turno del asistente agregado,
  * listo para volver a mandar. El costo, los reintentos y el timeout son los
- * mismos de `runClaude`: la unica diferencia es que el modelo ve lo que dijo y
+ * mismos de `runModelo`: la unica diferencia es que el modelo ve lo que dijo y
  * lo que le contestaron en las vueltas anteriores.
  *
  * El primer mensaje puede armarse con `conArchivos(prompt, files, { cache })`
- * para inlinear archivos igual que en `runClaude`.
+ * para inlinear archivos igual que en `runModelo`.
  */
-export async function runClaudeChat(mensajes, opts = {}) {
+export async function runModeloChat(mensajes, opts = {}) {
   if (!Array.isArray(mensajes) || mensajes.length === 0) {
-    throw new ClaudeError("runClaudeChat necesita al menos un mensaje");
+    throw new ModeloError("runModeloChat necesita al menos un mensaje");
   }
   const res = await enviarMensajes(mensajes, opts);
   return { ...res, mensajes: [...mensajes, { role: "assistant", content: res.text }] };
@@ -88,15 +90,15 @@ async function enviarMensajes(mensajes, opts = {}) {
   const timeoutMs = Number(opts.timeoutMs ?? minia.timeoutMs) > 0 ? Number(opts.timeoutMs ?? minia.timeoutMs) : 900_000;
 
   if (!apiKey) {
-    throw new ClaudeError(
+    throw new ModeloError(
       "falta la API key del modelo: cargala en el panel (npm run web -> Ajustes) o en .env como BCA_MINIMAX_API_KEY",
     );
   }
   if (!baseUrl) {
-    throw new ClaudeError("falta cfg.minimax.baseUrl en brand-content-ai.config.json");
+    throw new ModeloError("falta cfg.minimax.baseUrl en brand-content-ai.config.json");
   }
   if (!opts.model) {
-    throw new ClaudeError("falta opts.model: cada llamada elige su modelo desde cfg.models");
+    throw new ModeloError("falta opts.model: cada llamada elige su modelo desde cfg.models");
   }
 
   const body = {
@@ -155,7 +157,7 @@ async function enviarMensajes(mensajes, opts = {}) {
     } catch {
       /* la dejo como texto crudo */
     }
-    throw new ClaudeError(
+    throw new ModeloError(
       `minimax respondio ${response.status}: ${String(detail).slice(0, 500)}`,
       { status: response.status, body: rawText.slice(0, 4000) },
     );
@@ -165,7 +167,7 @@ async function enviarMensajes(mensajes, opts = {}) {
   try {
     payload = JSON.parse(rawText);
   } catch (err) {
-    throw new ClaudeError("minimax no devolvio JSON parseable", { body: rawText.slice(0, 800), cause: err });
+    throw new ModeloError("minimax no devolvio JSON parseable", { body: rawText.slice(0, 800), cause: err });
   }
 
   const text = extractAssistantText(payload);
@@ -194,17 +196,17 @@ async function enviarMensajes(mensajes, opts = {}) {
 }
 
 /**
- * Igual que `runClaude` pero exige JSON de vuelta y lo valida. Reintenta una
+ * Igual que `runModelo` pero exige JSON de vuelta y lo valida. Reintenta una
  * vez si la primera respuesta no parsea.
  */
-export async function runClaudeJSON(prompt, opts = {}) {
+export async function runModeloJSON(prompt, opts = {}) {
   const instruction =
     "\n\nResponde UNICAMENTE con JSON valido, sin prosa, sin bloques de codigo. " +
     "Tu respuesta completa debe arrancar con { o [ y terminar con } o ].";
 
   let last;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await runClaude(prompt + instruction, opts);
+    const res = await runModelo(prompt + instruction, opts);
     const parsed = extractJSON(res.text);
     if (parsed !== undefined) return { ...res, data: parsed };
     last = res;
@@ -215,7 +217,7 @@ export async function runClaudeJSON(prompt, opts = {}) {
   // Un JSON cortado a la mitad no es "el modelo no entendio": es que no le
   // alcanzo el techo de salida. Sin decirlo, se busca el problema en el prompt.
   const cut = last?.stopReason === "max_tokens";
-  throw new ClaudeError(
+  throw new ModeloError(
     cut
       ? "minimax corto la respuesta en max_tokens y el JSON quedo incompleto " +
         "(subi minimax.maxTokens en brand-content-ai.config.json)"
@@ -294,7 +296,7 @@ export function extractJSON(text) {
  * (frame.md, la composicion de referencia, las escenas) se va a repetir; en una
  * conversacion de varias vueltas es lo que hace que la vuelta N no vuelva a
  * pagar precio de entrada por todo lo de la vuelta 1. Si el endpoint no lo
- * soporta, `runClaude` lo reintenta sin la marca (ver enviarMensajes).
+ * soporta, `runModelo` lo reintenta sin la marca (ver enviarMensajes).
  */
 export function conArchivos(prompt, files, { cache = false } = {}) {
   const entries = files && typeof files === "object" ? Object.entries(files) : [];
@@ -395,7 +397,7 @@ async function postJson(url, body, { apiKey, version, timeoutMs }) {
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    ac.abort(new ClaudeError(`timeout tras ${timeoutMs}ms`));
+    ac.abort(new ModeloError(`timeout tras ${timeoutMs}ms`));
   }, timeoutMs);
 
   let response;
@@ -415,18 +417,18 @@ async function postJson(url, body, { apiKey, version, timeoutMs }) {
     rawText = await response.text();
   } catch (err) {
     clearTimeout(timer);
-    if (err instanceof ClaudeError) throw err;
+    if (err instanceof ModeloError) throw err;
     // "fetch failed" a secas no dice nada: el caso tipico es un baseUrl mal
     // escrito (el host de MiniMax es minimax.io / minimaxi.com, no minimax.com)
     // y sin la URL en el mensaje no hay forma de verlo desde el panel.
     const code = err?.cause?.code ?? err?.code ?? null;
     const dns = code === "ENOTFOUND" || code === "EAI_AGAIN";
     if (timedOut) {
-      const e = new ClaudeError(`timeout tras ${timeoutMs}ms llamando a ${url}`, { cause: err });
+      const e = new ModeloError(`timeout tras ${timeoutMs}ms llamando a ${url}`, { cause: err });
       e.timedOut = true; // el caller no lo reintenta: ya espero lo suyo
       throw e;
     }
-    throw new ClaudeError(
+    throw new ModeloError(
       `no se pudo llamar a ${url}: ${err?.message ?? err}${code ? ` (${code})` : ""}` +
         (dns
           ? " — ese host no existe. cfg.minimax.baseUrl deberia ser " +
