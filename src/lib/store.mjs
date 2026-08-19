@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS items (
   message        TEXT NOT NULL,              -- LA cosa que tiene que comunicar
   status         TEXT NOT NULL DEFAULT 'planned',
                  -- planned -> briefed -> building -> built -> delivered -> approved | rejected
-  brief          TEXT,                       -- JSON: el brief completo que genero Claude
+  brief          TEXT,                       -- JSON: el brief completo que genero el modelo
   asset_path     TEXT,                       -- ruta al entregable final
   preview_path   TEXT,                       -- ruta a la imagen de preview (para Telegram)
   error          TEXT,                       -- ultimo error, si fallo

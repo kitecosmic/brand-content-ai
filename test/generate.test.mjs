@@ -681,9 +681,10 @@ function hyperframesStub(cliCalls, checks) {
 }
 
 test("check: la primera reparacion apunta al archivo con el error bloqueante, no a los warnings (caso real)", async () => {
-  // La corrida documentada en SPEC-reparacion.md: 1 error en 03 y 11 avisos en
-  // 01 y 02. Dos reparaciones se fueron a 01 y 02. Ahora el prompt separa lo
-  // que bloquea y el modelo (razonable) toca 03 en la primera vuelta.
+  // Una corrida real: 1 error bloqueante en 03 y 11 avisos cosmeticos en 01 y
+  // 02. Dos reparaciones seguidas se fueron a 01 y 02 sin tocar el error. Ahora
+  // el prompt separa lo que bloquea de lo que no, y el modelo (razonable) toca
+  // 03 en la primera vuelta.
   const { cfg, store } = makeEnv();
   const item = addItem(store, { format: "carousel" });
   const composeCalls = [];
