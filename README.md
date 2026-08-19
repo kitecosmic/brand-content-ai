@@ -212,6 +212,20 @@ cerrarlo; para levantarlo en otro puerto, `npm run bot -- --port 4318`.
 
 ### Publicarlo en un servidor
 
+Para que corra 24/7 hay una imagen de Docker con todo lo que el render necesita
+—Node, Chrome, ffmpeg y la CLI de HyperFrames— ya instalado y fijado, más el
+ciclo diario adentro. El servidor no necesita nada además de Docker, y el
+mantenimiento son dos comandos:
+
+```bash
+git pull && ./deploy.sh
+```
+
+El paso a paso completo (tamaño del servidor, HTTPS, respaldo, diagnóstico) está
+en **[docs/deploy.md](docs/deploy.md)**.
+
+Lo que sigue vale igual, con Docker o sin él.
+
 El panel **se niega a escuchar fuera de 127.0.0.1 si no hay forma de
 autenticarse** — ni cuentas creadas ni `BCA_PANEL_PASSWORD`. Un panel abierto
 es la tarjeta de crédito de cualquiera que pase. Con tu cuenta ya creada, podés

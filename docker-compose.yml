@@ -1,0 +1,69 @@
+# Brand Content AI en el servidor: dos procesos, una imagen.
+#
+#   panel  el panel web y, si Telegram esta configurado, el bot en el mismo proceso
+#   ciclo  el ciclo diario (sync, plan, generate, deliver) a la hora de publicacion
+#
+# Son dos servicios y no uno porque una generacion que se cuelga no tiene por
+# que llevarse puesto el panel: el estado vive en SQLite y los dos procesos ya
+# saben compartirlo.
+#
+# El contenedor comparte la red del host a proposito. Asi el panel escucha en
+# 127.0.0.1 del servidor —igual que en tu PC, y con la misma garantia de que no
+# se publica sin cuentas— y quien decide exponerlo es el proxy con TLS que
+# tengas delante, o un tunel SSH. Con una red propia de Docker habria que
+# escuchar en 0.0.0.0 dentro del contenedor, que es justo lo que el panel se
+# niega a hacer en una instalacion recien nacida.
+
+name: brand-content-ai
+
+x-comun: &comun
+  build: .
+  image: brand-content-ai:local
+  env_file: .env
+  environment:
+    # Hora local del servidor. Tiene que coincidir con calendar.timezone o el
+    # ciclo diario corre a destiempo; el ciclo avisa al arrancar si no coinciden.
+    TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    # Ajustes propios del servidor (por ejemplo bajar maxConcurrentGenerations)
+    # sin tocar el config del repo, que se pisa en cada `git pull`. El archivo es
+    # opcional: si no existe, se ignora y manda brand-content-ai.config.json.
+    BCA_CONFIG: /app/data/config.local.json
+  volumes:
+    # Todo lo que sobrevive a un redeploy. La base y las piezas quedan en el
+    # host, en las mismas carpetas que usa una instalacion normal.
+    - ./data:/app/data
+    - ./content:/app/content
+    - ./projects:/app/projects
+  network_mode: host
+  # /dev/shm por defecto son 64 MB en un contenedor y Chrome lo usa de verdad:
+  # con ese tamano el render muere a mitad de camino con un error que no dice
+  # nada. 2 GB es lo que recomienda la propia CLI.
+  shm_size: 2gb
+  # Un init que entierre a los hijos: cada render deja un arbol npx -> node ->
+  # Chrome y sin esto los zombies se acumulan en el contenedor.
+  init: true
+  restart: unless-stopped
+  # Tiempo para cerrar Chrome y la base antes del golpe seco.
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options:
+      # Sin tope, el log de un servidor que corre meses se come el disco.
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  panel:
+    <<: *comun
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:${PANEL_PORT:-4317}/login"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  ciclo:
+    <<: *comun
+    command: ["node", "--disable-warning=ExperimentalWarning", "docker/ciclo-diario.mjs"]
+    depends_on:
+      - panel

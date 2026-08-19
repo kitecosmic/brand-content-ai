@@ -203,6 +203,12 @@ export const STATUSES = [
 export function openStore(dbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
+  // Con WAL varios procesos leen a la vez, pero escribir sigue siendo de a uno:
+  // si el panel guarda un item en el instante en que el ciclo diario anota un
+  // costo, el segundo recibe SQLITE_BUSY y falla en el acto. El timeout hace
+  // que espere su turno —son escrituras de milisegundos— en vez de tirar. Va
+  // antes de las migraciones, que tambien escriben.
+  db.exec("PRAGMA busy_timeout = 5000;");
   // El orden importa: las tablas viejas se arreglan ANTES de correr el esquema
   // (que crea indices sobre columnas que la tabla vieja no tiene), y las
   // columnas nuevas se agregan despues.

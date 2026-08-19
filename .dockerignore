@@ -1,0 +1,39 @@
+# Lo que NO entra en la imagen.
+#
+# La regla es simple: en la imagen va el codigo, y nada de lo que produce el
+# codigo. Los datos (base, piezas, proyectos) viven en volumenes montados desde
+# el host, asi que si se colaran en la imagen los taparia el montaje igual —
+# pero engordarian cada build y, peor, dejarian una copia vieja de la base con
+# las API keys adentro dentro de un artefacto que se puede copiar.
+
+.git/
+.gitignore
+.gitattributes
+
+# Estado y salidas: van por volumen, no por imagen.
+data/
+content/
+projects/
+
+# Secretos: los pasa docker compose por env_file, nunca se copian.
+.env
+.env.*
+!.env.example
+brand-content-ai.config.local.json
+
+# Ruido local.
+node_modules/
+*.log
+*.db
+*.db-wal
+*.db-shm
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Documentacion y notas: no cambian lo que corre, y tocarlas invalidaria la
+# capa del COPY en cada build.
+docs/private/
+*-private.md
+NOTES.md
