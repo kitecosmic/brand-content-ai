@@ -36,7 +36,7 @@ import {
 } from "node:fs";
 import { join, sep, dirname, relative } from "node:path";
 
-import { extractJSON, runClaude, runClaudeJSON } from "./claude.mjs";
+import { conArchivos, extractJSON, runClaude, runClaudeChat, runClaudeJSON } from "./claude.mjs";
 import { META_DIR, rutaMeta, slugify } from "./config.mjs";
 
 
@@ -67,7 +67,18 @@ const SNAPSHOT_TIMEOUT_MS = 15 * 60_000;
 const RENDER_TIMEOUT_MS = 45 * 60_000;
 const FFMPEG_TIMEOUT_MS = 2 * 60_000;
 
-const MAX_CHECK_REPAIRS = 2; // hasta 2 reintentos => como maximo 3 `check`
+// La reparacion de `check` es una conversacion: el modelo escribe, ve el
+// resultado del check y ajusta. Estas son las vueltas y el gasto por defecto
+// cuando la config no dice otra cosa (limits.repairTurns / repairTokenBudget).
+export const DEFAULT_REPAIR_TURNS = 4;
+export const DEFAULT_REPAIR_TOKEN_BUDGET = 600_000;
+
+// Escalada cuando el mismo error bloqueante sobrevive vuelta tras vuelta.
+// "Vistas" es cuantas veces un check lo reporto; la primera vez se repara, la
+// segunda se repara diciendo que el arreglo anterior no sirvio, la tercera se
+// descarta la escena y se recompone desde el brief, la cuarta se corta.
+export const VISTAS_PARA_RECOMPONER = 3;
+export const VISTAS_PARA_CORTAR = 4;
 
 const GSAP_FALLBACK_TAG =
   '<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js" crossorigin="anonymous"></script>';
@@ -95,6 +106,7 @@ export class GenerateError extends Error {
 export function defaultDeps() {
   return {
     runClaude,
+    runClaudeChat,
     runClaudeJSON,
     hyperframes: runHyperframes,
     ffmpeg: extractFrame,
@@ -857,83 +869,251 @@ export function buildCompositionPrompt({ cfg, brand, item, formatCfg, brief, pla
 }
 
 /**
- * Prompt de reparacion: la salida de `check` vuelve al modelo como parche.
- *
- * `reportePrevio` y `yaTocados` son lo que faltaba: sin ellos cada reparacion
- * empieza de cero, sin saber que ya se reescribieron seis composiciones y que
- * el linter siguio diciendo lo mismo. Reescribir lo mismo otra vez es lo que
- * hacia que un fallo estructural se sintiera un ciclo sin salida.
+ * Un finding, para el modelo. Sin el `[severity]` de adelante: la seccion en la
+ * que aparece ya dice si bloquea o no.
  */
-export function buildRepairPrompt({ plan, report, attempt, reportePrevio = null, yaTocados = [] } = {}) {
-  const persistentes = reportePrevio
-    ? report.split("\n").filter((l) => l.trim() && reportePrevio.includes(l))
-    : [];
-
+function findingParaPrompt(f, i) {
+  const donde = [f.codigo, [f.t ? `at t=${f.t}` : "", f.selector ? `selector \`${f.selector}\`` : ""].filter(Boolean).join(", ")]
+    .filter(Boolean)
+    .join(" ");
   return [
-    `\`hyperframes check\` failed (repair attempt ${attempt} of ${MAX_CHECK_REPAIRS}). Fix the composition files in place.`,
-    "",
-    "# Findings",
-    report,
-    "",
-    ...(reportePrevio
-      ? [
-          "# What the previous attempt already did",
-          yaTocados.length
-            ? `It rewrote ${yaTocados.length} file(s): ${yaTocados.join(", ")}.`
-            : "It returned NO files at all — nothing was written, which is why nothing changed. " +
-              "Whatever you do this time, you must print the full contents of every file you touch " +
-              "inside the fences described below, or this attempt is wasted too.",
-          ...(persistentes.length
-            ? [
-                "",
-                "These findings SURVIVED that rewrite — they are still here, unchanged:",
-                ...persistentes.slice(0, 12).map((l) => `  ${l}`),
-                "",
-                "So do not apply the same fix again. If a finding survived a full rewrite of its file,",
-                "the cause is structural: the wrong element is being measured, the value is set somewhere",
-                "else that overrides yours, or the constraint cannot be met with the current layout and the",
-                "element has to change size, position or nesting. Say what you changed differently this time.",
-              ]
-            : ["", "None of the current findings are repeats, so the previous rewrite did help."]),
-          "",
-        ]
-      : []),
+    `${i + 1}. ${f.file || "(file not reported)"}`,
+    `   ${donde}${f.mensaje ? ` — ${f.mensaje}` : ""}`,
+    ...(f.fix ? [`   fix: ${f.fix}`] : []),
+  ].join("\n");
+}
+
+/** Dos rutas hablan del mismo archivo si coinciden normalizadas o por nombre. */
+function mismoArchivo(a, b) {
+  const na = normalizePath(a);
+  const nb = normalizePath(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const base = (p) => p.split("/").pop();
+  return na.endsWith(`/${base(nb)}`) || nb.endsWith(`/${base(na)}`);
+}
+
+/**
+ * Los archivos del plan que tienen algun error bloqueante en este dictamen.
+ * El linter reporta la ruta relativa al proyecto; se compara normalizada y,
+ * si no coincide exacto, por nombre de archivo.
+ */
+export function archivosBloqueados(plan, check) {
+  const out = [];
+  for (const s of plan.scenes) {
+    if ((check?.bloqueantes ?? []).some((f) => mismoArchivo(f.file, s.file))) out.push(s.file);
+  }
+  return out;
+}
+
+/** Bloque "que bloquea / que no": comun a la apertura y a cada vuelta. */
+function bloqueDictamen(plan, check, { historia = {} } = {}) {
+  const bloq = check.bloqueantes;
+  const sec = check.secundarios;
+  const out = [];
+  if (bloq.length) {
+    out.push(
+      "# What blocks the render (fix these — nothing else matters until they pass)",
+      ...bloq.map((f, i) => {
+        const vistas = historia[firmaDe(f)] ?? 0;
+        const nota =
+          vistas >= 2
+            ? `   NOTE: this exact error has now been reported ${vistas} times in this piece. Earlier repairs did not remove it.`
+            : "";
+        return [findingParaPrompt(f, i), nota].filter(Boolean).join("\n");
+      }),
+      "",
+    );
+  } else if (check.findings.length) {
+    // El check fallo pero ningun finding viene marcado como error: no se puede
+    // decir cual bloquea, asi que se muestran todos como candidatos.
+    out.push(
+      "# The check failed, but no finding is tagged as an error. The cause is among these:",
+      ...check.findings.map(findingParaPrompt),
+      "",
+    );
+  } else {
+    out.push("# The check failed without structured findings. Raw output:", check.texto, "");
+  }
+  if (bloq.length && sec.length) {
+    // Agrupados por regla: once renglones casi iguales solo compiten por la
+    // atencion con el unico que importa.
+    const grupos = new Map();
+    for (const f of sec) {
+      const k = `[${f.severity}] ${f.codigo}`;
+      const g = grupos.get(k) ?? { n: 0, files: new Set() };
+      g.n++;
+      if (f.file) g.files.add(f.file.split("/").pop());
+      grupos.set(k, g);
+    }
+    out.push(
+      `# Everything below is cosmetic (${sec.length} finding${sec.length === 1 ? "" : "s"}). The check PASSES with these present.`,
+      "Do not spend this turn on them.",
+      ...[...grupos].map(
+        ([k, g]) => `  ${k} x${g.n}${g.files.size ? ` (${[...g.files].slice(0, 3).join(", ")}${g.files.size > 3 ? ", ..." : ""})` : ""}`,
+      ),
+      "",
+    );
+  }
+  return out;
+}
+
+function listaArchivos(plan, bloqueados) {
+  return [
     "# Files you may edit",
-    ...plan.scenes.map((s) => `- ${s.file}  (composition id: ${s.compId}, data-duration ${s.duration})`),
+    ...plan.scenes.map(
+      (s) =>
+        `- ${s.file}  (composition id: ${s.compId}, data-duration ${s.duration})` +
+        (bloqueados.includes(s.file) ? "   <- has a blocking error" : ""),
+    ),
+    ...(bloqueados.length
+      ? ["", `Only ${bloqueados.length === 1 ? "one file has" : `${bloqueados.length} files have`} a blocking error. Start there.`]
+      : []),
     "",
     "index.html is owned by the pipeline: do not touch it, and do not change any data-start,",
     "data-duration, data-width, data-height or data-composition-id value listed above.",
+  ];
+}
+
+const ENTREGA = [
+  "# How to deliver the patched HTML",
+  "There are no Edit or Write tools here. For every file you changed, print the FULL new",
+  "contents in your answer using this exact fence shape:",
+  "",
+  "```html",
+  "compositions/frames/01-name.html",
+  "<!doctype html> ... the full file, exactly as it would be on disk ...",
+  "```",
+  "",
+  "The first line inside the fence is the relative path and NOTHING else: no angle brackets,",
+  "no quotes, no backticks, no prose. Copy it verbatim from the list above.",
+  "",
+  "Files you did NOT change must not appear in your answer. Do not write any summary or recap.",
+  "",
+  `The ${FONT_MARKER} line you see inside <style> is a placeholder: the real font faces are injected`,
+  "after your answer. Keep that single line exactly as it is — never expand it, never paste",
+  "base64, never add a <link> to a font.",
+];
+
+const FALLAS_TIPICAS = [
+  "Notes on the usual failures:",
+  "- contrast: the finding carries the sampled colors and a compliant suggestion in the same palette",
+  "  direction — take it, do not invent a new colour.",
+  "- content_overlap between spans of the SAME headline (tight leading): that overlap is intentional —",
+  "  mark each line element with data-layout-allow-overlap instead of restaging. Two DIFFERENT blocks",
+  "  overlapping is a real bug: give each its own band.",
+  "- canvas_overflow: the type is too big for the safe area. Step down the type ramp or split the line;",
+  "  do not delete the copy.",
+  "- sweep_static: the animation finishes early and the rest of the window is frozen. Spread the reveals.",
+];
+
+/**
+ * Apertura de la conversacion de reparacion: el dictamen del check separado
+ * en lo que bloquea y lo que no, y los archivos marcados.
+ *
+ * `historia` son las veces que cada firma de error ya aparecio en esta pieza
+ * (ver readCheckHistory): si el error viene de una sesion anterior, se dice.
+ */
+export function buildRepairPrompt({ plan, check, turn = 1, maxTurns = DEFAULT_REPAIR_TURNS, historia = {} } = {}) {
+  const bloqueados = archivosBloqueados(plan, check);
+  return [
+    `\`hyperframes check\` failed (repair turn ${turn} of ${maxTurns}). Fix the composition files in place.`,
+    "After your answer the files are written, the check runs again, and you get the result back in this",
+    "same conversation — so fix what blocks, and only that; you will see whether it worked.",
     "",
-    "# How to deliver the patched HTML",
-    "There are no Edit or Write tools here. For every file you changed, print the FULL new",
-    "contents in your answer using this exact fence shape:",
+    ...bloqueDictamen(plan, check, { historia }),
+    ...listaArchivos(plan, bloqueados),
     "",
-    "```html",
-    "compositions/frames/01-name.html",
-    "<!doctype html> ... the full file, exactly as it would be on disk ...",
-    "```",
-    "",
-    "The first line inside the fence is the relative path and NOTHING else: no angle brackets,",
-    "no quotes, no backticks, no prose. Copy it verbatim from the list above.",
-    "",
-    "Files you did NOT change must not appear in your answer. Do not write any summary or recap.",
-    "",
-    `The ${FONT_MARKER} line you see inside <style> is a placeholder: the real font faces are injected`,
-    "after your answer. Keep that single line exactly as it is — never expand it, never paste",
-    "base64, never add a <link> to a font.",
+    ...ENTREGA,
     "",
     HARD_RULES,
     "",
-    "Notes on the usual failures:",
-    "- contrast: the finding carries the sampled colors and a compliant suggestion in the same palette",
-    "  direction — take it, do not invent a new colour.",
-    "- content_overlap between spans of the SAME headline (tight leading): that overlap is intentional —",
-    "  mark each line element with data-layout-allow-overlap instead of restaging. Two DIFFERENT blocks",
-    "  overlapping is a real bug: give each its own band.",
-    "- canvas_overflow: the type is too big for the safe area. Step down the type ramp or split the line;",
-    "  do not delete the copy.",
-    "- sweep_static: the animation finishes early and the rest of the window is frozen. Spread the reveals.",
+    ...FALLAS_TIPICAS,
   ].join("\n");
+}
+
+/**
+ * Una vuelta mas de la conversacion: lo que dijo el check despues de aplicar
+ * lo que el modelo devolvio. La diferencia con la apertura es que aca se dice
+ * QUE cambio respecto de la vuelta anterior — que errores sobrevivieron (el
+ * arreglo no sirvio), cuales aparecieron y cuales se fueron. Sin eso el modelo
+ * vuelve a mandar el mismo arreglo, porque desde su punto de vista nadie le
+ * dijo que fallo.
+ *
+ * `previo` es la vuelta anterior: `{ check, escritos, truncado }`.
+ */
+export function buildRepairFollowUp({ plan, check, previo, turn, maxTurns = DEFAULT_REPAIR_TURNS, historia = {} } = {}) {
+  const escritos = previo?.escritos ?? [];
+  const bloqueados = archivosBloqueados(plan, check);
+
+  if (escritos.length === 0) {
+    return [
+      "Your last answer contained NO ```html fences with a path on the first line, so nothing was written",
+      "and the check was not re-run: the findings below are unchanged.",
+      ...(previo?.truncado
+        ? ["(The answer was cut off at the output limit. Keep it shorter: only the files that change, no prose.)"]
+        : []),
+      "",
+      `Repair turn ${turn} of ${maxTurns}. Print the full contents of every file you fix, in the fence shape`,
+      "described at the start of this conversation. Nothing else.",
+      "",
+      ...bloqueDictamen(plan, check, { historia }),
+      ...listaArchivos(plan, bloqueados),
+    ].join("\n");
+  }
+
+  const antes = new Map((previo?.check?.bloqueantes ?? []).map((f) => [firmaDe(f), f]));
+  const ahora = new Map(check.bloqueantes.map((f) => [firmaDe(f), f]));
+  const sobrevivieron = [...ahora.values()].filter((f) => antes.has(firmaDe(f)));
+  const nuevos = [...ahora.values()].filter((f) => !antes.has(firmaDe(f)));
+  const resueltos = [...antes.values()].filter((f) => !ahora.has(firmaDe(f)));
+
+  const out = [
+    `The check ran again after your rewrite of ${escritos.join(", ")} (repair turn ${turn} of ${maxTurns}).`,
+    ...(previo?.truncado
+      ? ["Your previous answer was cut off at the output limit; whatever was after the cut was lost."]
+      : []),
+    "",
+  ];
+  if (sobrevivieron.length) {
+    out.push(
+      `# Still blocking — ${sobrevivieron.length === 1 ? "this error" : "these errors"} SURVIVED your rewrite. The fix did not work.`,
+      ...sobrevivieron.map((f, i) => {
+        const vistas = historia[firmaDe(f)] ?? 0;
+        const tocado = escritos.some((e) => mismoArchivo(e, f.file));
+        const nota = tocado
+          ? `   You rewrote this file and the linter still reports the exact same selector and time (seen ${vistas}x). Do not apply the same fix again: change the element's size, position, nesting or timing, or the layout it lives in.`
+          : "   You did NOT rewrite this file last turn. It is the one that blocks the render.";
+        return `${findingParaPrompt(f, i)}\n${nota}`;
+      }),
+      "",
+    );
+  }
+  if (nuevos.length) {
+    out.push(
+      `# New blocking error${nuevos.length === 1 ? "" : "s"} (not present before your rewrite)`,
+      ...nuevos.map(findingParaPrompt),
+      "",
+    );
+  }
+  if (resueltos.length) {
+    out.push(
+      `# Resolved by your rewrite (do not touch again): ${resueltos.map((f) => `${f.codigo} in ${f.file?.split("/").pop() ?? "?"}`).join("; ")}`,
+      "",
+    );
+  }
+  if (!sobrevivieron.length && !nuevos.length) {
+    // Fallo sin bloqueantes identificables: el bloque generico lo explica.
+    out.push(...bloqueDictamen(plan, check, { historia }));
+  } else if (check.secundarios.length) {
+    out.push(`# Cosmetic (${check.secundarios.length}, the check passes with them): ignore.`, "");
+  }
+  out.push(
+    ...listaArchivos(plan, bloqueados),
+    "",
+    "Deliver again: full contents of every file you change, one ```html fence per file, path on the first line, nothing else.",
+  );
+  return out.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1307,8 +1487,10 @@ function ensureProject(cfg, item, { log, brief, brand } = {}) {
 
   if (!sameBrief) {
     rmSync(join(dir, "compositions"), { recursive: true, force: true });
+    // Con otro brief los errores de check anteriores no dicen nada de estas escenas.
+    clearCheckHistory(dir);
   } else {
-    log?.("mismo brief que el intento anterior: se conservan las escenas ya escritas");
+    log?.("mismo brief que el intento anterior: las escenas que ya estaban escritas se conservan y solo se componen las que faltan");
   }
   mkdirSync(join(dir, "compositions", "frames"), { recursive: true });
   if (stamp) {
@@ -1411,7 +1593,21 @@ export async function runHyperframes(cfg, projectDir, args, { timeoutMs, log } =
 
 const ANSI = /\u001B\[[0-9;]*[A-Za-z]/g;
 
-/** Resume la salida de `check` en algo que un modelo pueda arreglar. */
+/**
+ * El dictamen de `check`, separado en lo que importa y lo que no.
+ *
+ *   bloqueantes  findings con severidad `error`: son los que hacen fallar el
+ *                check (el mismo criterio que checkPassed) y los UNICOS que hay
+ *                que arreglar para poder renderizar.
+ *   secundarios  warnings e infos. El check PASA con ellos presentes.
+ *   texto        todo aplanado, errores primero — para logs y mensajes de error.
+ *
+ * Antes esto devolvia solo `texto`, ordenado por severidad y nada mas. En una
+ * corrida real (1 error contra 11 warnings) el modelo se paso dos reparaciones
+ * arreglando los warnings de otros archivos: nadie le habia dicho que uno solo
+ * de esos renglones era el que bloqueaba. La estructura existe para poder
+ * decirselo.
+ */
 export function summarizeCheck({ stdout = "", stderr = "", maxChars = 6000 } = {}) {
   const clean = String(stdout).replace(ANSI, "");
   const data = extractJSON(clean);
@@ -1426,41 +1622,69 @@ export function summarizeCheck({ stdout = "", stderr = "", maxChars = 6000 } = {
     if (typeof node !== "object") return;
     if (node.code || node.message || node.rule) {
       const severity = str(node.severity) || str(node.level) || "error";
+      const codigo = str(node.code) || str(node.rule);
+      const mensaje = str(node.message).slice(0, 400);
       const file = str(node.file ?? node.sourceFile ?? node.source);
+      const selector = str(node.selector);
       const time = node.time ?? node.firstSeen;
-      const fix = str(node.suggestion ?? node.fix ?? node.fixHint);
-      const line = [
+      const t = time != null && time !== "" ? String(time) : "";
+      const fix = str(node.suggestion ?? node.fix ?? node.fixHint).slice(0, 240);
+      const linea = [
         `[${severity}]`,
-        str(node.code) || str(node.rule),
-        str(node.message).slice(0, 400),
+        codigo,
+        mensaje,
         file ? `file=${file}` : "",
-        node.selector ? `selector=${str(node.selector)}` : "",
-        time != null ? `t=${time}` : "",
-        fix ? `fix=${fix.slice(0, 240)}` : "",
+        selector ? `selector=${selector}` : "",
+        t ? `t=${t}` : "",
+        fix ? `fix=${fix}` : "",
       ]
         .filter(Boolean)
         .join(" ");
-      if (!seen.has(line)) {
-        seen.add(line);
-        findings.push({ severity, line });
+      if (!seen.has(linea)) {
+        seen.add(linea);
+        findings.push({ severity, codigo, mensaje, file, selector, t, fix, linea, bloqueante: severity === "error" });
       }
     }
     for (const v of Object.values(node)) walk(v, depth + 1);
   };
   walk(data, 0);
 
-  let out;
+  // Lo que gatea el exit code va primero: el modelo tiene que arreglar errores,
+  // no perder el presupuesto de atencion en avisos de Studio.
+  const rank = { error: 0, warning: 1, warn: 1, info: 2 };
+  findings.sort((a, b) => (rank[a.severity] ?? 0) - (rank[b.severity] ?? 0));
+
+  let texto;
   if (findings.length) {
-    // Lo que gatea el exit code va primero: el modelo tiene que arreglar errores,
-    // no perder el presupuesto de atencion en avisos de Studio.
-    const rank = { error: 0, warning: 1, warn: 1, info: 2 };
-    findings.sort((a, b) => (rank[a.severity] ?? 0) - (rank[b.severity] ?? 0));
-    out = findings.slice(0, 40).map((f) => f.line).join("\n");
+    texto = findings.slice(0, 40).map((f) => f.linea).join("\n");
   } else {
     const tail = `${clean}\n${String(stderr).replace(ANSI, "")}`.trim();
-    out = tail.slice(-maxChars) || "check fallo sin salida legible";
+    texto = tail.slice(-maxChars) || "check fallo sin salida legible";
   }
-  return out.length > maxChars ? `${out.slice(0, maxChars)}\n[...truncado]` : out;
+  if (texto.length > maxChars) texto = `${texto.slice(0, maxChars)}\n[...truncado]`;
+
+  return {
+    findings,
+    bloqueantes: findings.filter((f) => f.bloqueante),
+    secundarios: findings.filter((f) => !f.bloqueante),
+    texto,
+  };
+}
+
+/**
+ * La firma de un finding: lo que hace que dos dictamenes hablen del MISMO
+ * error aunque el resto del report haya cambiado. Se compara esto y no el
+ * report entero porque los warnings fluctuan de una vuelta a otra (un `info`
+ * cambia de selector cuando se reescribe el archivo) y comparar todo hacia
+ * imposible ver que el error bloqueante era identico las tres veces.
+ */
+export function firmaDe(f) {
+  return [f.codigo, f.file, f.selector, f.t].map((v) => String(v ?? "")).join("|");
+}
+
+/** Firmas ordenadas de los errores bloqueantes de un dictamen. */
+export function firmasBloqueantes(check) {
+  return [...new Set((check?.bloqueantes ?? []).map(firmaDe))].sort();
 }
 
 export function checkPassed({ code, stdout }) {
@@ -1857,6 +2081,15 @@ async function writeCompositions(cfg, store, item, formatCfg, brief, plan, proje
   let cost = 0;
   let done = 0;
 
+  if (pending.length) {
+    const cuales = pending.map((s) => s.file.split("/").pop()).join(", ");
+    log?.(
+      `compose: ${pending.length} escena(s) por escribir (${cuales}) en ${batches.length} lote(s) de a ${batchSize}, ${limit} en paralelo` +
+        (reused ? `; las otras ${reused} ya estaban escritas del intento anterior y se reusan` : "") +
+        " — cada lote es una llamada al modelo de varios minutos; se avisa al terminar cada uno",
+    );
+  }
+
   const results = await mapLimit(batches, limit, async (batch) => {
     const prompt = buildCompositionPrompt({
       cfg,
@@ -1957,102 +2190,275 @@ async function writeCompositions(cfg, store, item, formatCfg, brief, plan, proje
     throw new GenerateError(`no se pudo escribir: ${detalle}`, { phase: "compose", itemId: item.id });
   }
 
-  log?.(
-    `composiciones: ${pending.length} escrita(s) en ${batches.length} lote(s) de a ${batchSize} ` +
-      `(${limit} en paralelo)` +
-      (reused ? `, ${reused} reusada(s)` : ""),
-  );
+  if (!pending.length) {
+    log?.(`composiciones: las ${reused} ya estaban escritas del intento anterior (mismo brief); no hay nada que componer, se pasa al check`);
+  } else {
+    log?.(
+      `composiciones: ${pending.length} escrita(s) en ${batches.length} lote(s)` +
+        (reused ? ` + ${reused} reusada(s) del intento anterior` : "") +
+        ` = ${plan.scenes.length} listas`,
+    );
+  }
   return cost;
 }
 
+/** Cuantas vueltas de reparacion por sesion de check admite la config. */
+export function repairTurnsDe(cfg) {
+  const n = Number(cfg?.limits?.repairTurns);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_REPAIR_TURNS;
+}
+
+function repairTokenBudgetDe(cfg) {
+  const n = Number(cfg?.limits?.repairTokenBudget);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_REPAIR_TOKEN_BUDGET;
+}
+
 /**
- * `check` antes de renderizar, siempre. Si falla, el error vuelve al modelo
- * como parche y se reintenta. Renderizar sin validar desperdicia minutos.
+ * Cuantas veces cada firma de error bloqueante aparecio en los checks de esta
+ * pieza (`.bca/check-history.json`, `{ "<firma>": vistas }`).
+ *
+ * Vive en disco y no en memoria porque una sesion que agota sus vueltas hace
+ * fallar el item con fase `check`, que es reintentable: el intento siguiente
+ * arranca otra sesion y tiene que saber que ese error ya sobrevivio a dos
+ * reparaciones, para no volver a empezar de cero con el. Se borra cuando el
+ * check pasa y cuando cambia el brief (ensureProject).
  */
-async function checkAndRepair(cfg, store, item, plan, projectDir, indexHtml, { log, deps, brand }) {
+export function readCheckHistory(projectDir) {
+  const f = rutaMeta(projectDir, "check-history.json");
+  if (!existsSync(f)) return {};
+  try {
+    const data = JSON.parse(readFileSync(f, "utf8"));
+    return data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeCheckHistory(projectDir, historia) {
+  const out = rutaMeta(projectDir, "check-history.json");
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, JSON.stringify(historia, null, 2));
+}
+
+export function clearCheckHistory(projectDir) {
+  rmSync(rutaMeta(projectDir, "check-history.json"), { force: true });
+}
+
+/**
+ * Descarta las escenas con errores bloqueantes que sobrevivieron a todo y deja
+ * anotado por que, para que la recomposicion no repita el planteo. Es la
+ * misma maquinaria de la fase `layout`: borrar el archivo hace que
+ * writeCompositions lo rehaga (el brief no cambio, asi que las demas escenas
+ * se conservan) y la nota viaja en el prompt de esa escena.
+ */
+function descartarEscenas(projectDir, plan, check, files, { vistas, log }) {
+  const notes = readLayoutNotes(projectDir);
+  for (const file of files) {
+    const propios = check.bloqueantes.filter((f) => mismoArchivo(f.file, file));
+    const lineas = propios.map((f) => `- ${f.codigo}${f.selector ? ` on \`${f.selector}\`` : ""}${f.t ? ` at t=${f.t}` : ""}${f.mensaje ? `: ${f.mensaje}` : ""}`);
+    const fixes = [...new Set(propios.map((f) => f.fix).filter(Boolean))];
+    notes[file] =
+      `The previous version of this scene failed \`hyperframes check\` ${vistas} times in a row with the same error, ` +
+      `even after being rewritten twice to fix it:\n${lineas.join("\n")}\n` +
+      "Do NOT patch that version: compose the scene again from the brief with a different staging " +
+      "(other block distribution, other type sizes, other reveal sequence) so that this error cannot occur." +
+      (fixes.length ? ` The linter suggests: ${fixes.join(" / ")}` : "");
+    const abs = join(projectDir, file);
+    if (existsSync(abs)) rmSync(abs, { force: true });
+    log?.(`  descartada para recomponer desde el brief: ${file}`, "aviso");
+  }
+  writeLayoutNotes(projectDir, notes);
+}
+
+/**
+ * `check` antes de renderizar, siempre. Renderizar sin validar desperdicia
+ * minutos. Si falla, se abre una conversacion con el modelo: le llega el
+ * dictamen separado en lo que bloquea y lo que no, escribe los archivos, se
+ * corre el check de nuevo y el resultado vuelve como mensaje siguiente de la
+ * MISMA conversacion. Asi el modelo ve el efecto de lo que hizo y puede probar
+ * otra cosa, en vez de disparar a ciegas una vez por llamada.
+ *
+ * Cuando el mismo error bloqueante (misma firma: codigo+archivo+selector+t)
+ * sobrevive vuelta tras vuelta se escala, no se insiste:
+ *   vista 2  se le dice que su arreglo no sirvio y que cambie de planteo
+ *   vista 3  se descarta la escena y se recompone desde el brief
+ *   vista 4  se corta con `check-estancado` (no reintentable): ni parchar ni
+ *            rehacer la escena alcanza — el brief pide algo que no entra, y
+ *            eso lo decide una persona.
+ *
+ * Topes: `limits.repairTurns` vueltas (una recomposicion cuenta como vuelta) y
+ * `limits.repairTokenBudget` tokens acumulados, porque el historial crece.
+ * Agotarlos falla con fase `check`, reintentable: el intento siguiente reusa
+ * las escenas y la historia de firmas, asi que cuesta solo las reparaciones.
+ */
+async function checkAndRepair(cfg, store, item, formatCfg, brief, plan, projectDir, indexHtml, { log, deps, brand }) {
+  const maxTurns = repairTurnsDe(cfg);
+  const budget = repairTokenBudgetDe(cfg);
+  const historia = readCheckHistory(projectDir);
   let cost = 0;
-  let reportePrevio = null;
-  let arregladosPrevios = [];
+  let tokens = 0;
+  let turnos = 0;
+  let checks = 0;
+  let mensajes = null; // la conversacion en curso; null = todavia no se abrio (o se reinicio)
+  let previo = null; // { check, escritos, truncado } de la vuelta anterior
+  let check = null; // ultimo dictamen
+  let necesitaCheck = true;
 
-  for (let attempt = 0; attempt <= MAX_CHECK_REPAIRS; attempt++) {
-    // index.html se reescribe antes de cada check: el contrato temporal es nuestro.
-    writeFileSync(join(projectDir, "index.html"), indexHtml);
+  for (;;) {
+    if (necesitaCheck) {
+      // index.html se reescribe antes de cada check: el contrato temporal es nuestro.
+      writeFileSync(join(projectDir, "index.html"), indexHtml);
+      checks++;
+      store.beat(item.id, `check ${checks}`);
+      log?.(
+        checks === 1
+          ? "check: hyperframes abre un navegador y mide contraste, solapes, desbordes y animacion de cada escena — suele tardar menos de un minuto (mas la primera vez, que npx baja la CLI)"
+          : `check ${checks}: se vuelve a medir con lo que se acaba de escribir`,
+      );
+      const res = await deps.hyperframes(cfg, projectDir, ["check", "--json"], {
+        timeoutMs: CHECK_TIMEOUT_MS,
+        log,
+      });
+      if (checkPassed(res)) {
+        clearCheckHistory(projectDir);
+        store.logRun({ kind: "render", itemId: item.id, ok: true, detail: `check ok (check ${checks}, ${turnos} vuelta(s) de reparacion)` });
+        log?.(`check ok${turnos ? ` tras ${turnos} vuelta(s) de reparacion` : " a la primera"}: se puede renderizar`);
+        return cost;
+      }
+      check = summarizeCheck(res);
+      store.logRun({ kind: "render", itemId: item.id, ok: false, detail: `check fallo: ${check.texto.slice(0, 300)}` });
 
-    const res = await deps.hyperframes(cfg, projectDir, ["check", "--json"], {
-      timeoutMs: CHECK_TIMEOUT_MS,
-      log,
-    });
-    if (checkPassed(res)) {
-      store.logRun({ kind: "render", itemId: item.id, ok: true, detail: `check ok (intento ${attempt + 1})` });
-      log?.(`check ok (intento ${attempt + 1})`);
-      return cost;
+      // Que fallo, no solo que fallo algo — y de todo lo que fallo, que parte
+      // impide renderizar. En consola y en el panel se ve lo mismo que le llega
+      // al modelo: lo bloqueante aparte de lo cosmetico.
+      const bloq = check.bloqueantes;
+      const sec = check.secundarios;
+      if (bloq.length) {
+        log?.(`check fallo: ${bloq.length} error(es) bloqueante(s)${sec.length ? ` y ${sec.length} aviso(s) cosmetico(s) que no impiden renderizar` : ""}`, "error");
+        for (const f of bloq.slice(0, 6)) log?.(`    ${f.linea}`, "error");
+        if (bloq.length > 6) log?.(`    (+${bloq.length - 6} bloqueantes mas)`, "error");
+        for (const f of sec.slice(0, 3)) log?.(`    ${f.linea}`, "aviso");
+        if (sec.length > 3) log?.(`    (+${sec.length - 3} cosmeticos mas)`, "aviso");
+      } else {
+        log?.("check fallo sin errores marcados como bloqueantes:", "error");
+        for (const linea of check.texto.split("\n").slice(0, 6)) log?.(`    ${linea}`, "error");
+      }
+
+      // Contar cuantas veces se vio cada error bloqueante y decidir si se
+      // sigue conversando, se recompone o se corta.
+      for (const firma of firmasBloqueantes(check)) historia[firma] = (historia[firma] ?? 0) + 1;
+      if (bloq.length) writeCheckHistory(projectDir, historia);
+      const vistasDe = (f) => historia[firmaDe(f)] ?? 0;
+      const peor = Math.max(0, ...bloq.map(vistasDe));
+
+      if (peor >= VISTAS_PARA_CORTAR) {
+        const tercos = bloq.filter((f) => vistasDe(f) >= VISTAS_PARA_CORTAR);
+        const archivos = archivosBloqueados(plan, { bloqueantes: tercos });
+        log?.(
+          `el mismo error volvio ${peor} veces (${archivos.join(", ")}): sobrevivio a dos reparaciones y a recomponer la escena desde cero. Se corta: el brief pide algo que esa escena no puede cumplir; rechazala con un comentario para rehacer el brief`,
+          "error",
+        );
+        throw new GenerateError(
+          `hyperframes check devuelve el mismo error ${peor} veces seguidas en ${archivos.join(", ")}, ` +
+            `despues de reparar dos veces y recomponer la escena desde el brief; reintentar no lo va a arreglar. ` +
+            `Probablemente el brief pide algo que no entra en esa escena: rechazala con un comentario para que se rehaga el brief.\n` +
+            tercos.map((f) => f.linea).join("\n"),
+          { phase: "check-estancado", itemId: item.id },
+        );
+      }
+
+      if (peor >= VISTAS_PARA_RECOMPONER) {
+        const tercos = bloq.filter((f) => vistasDe(f) >= VISTAS_PARA_RECOMPONER);
+        const archivos = archivosBloqueados(plan, { bloqueantes: tercos });
+        log?.(`el mismo error sobrevivio a ${peor - 1} reparaciones en ${archivos.join(", ")}: se deja de parchar y se recompone esa escena desde el brief`, "aviso");
+        descartarEscenas(projectDir, plan, check, archivos, { vistas: peor, log });
+        if (turnos >= maxTurns) {
+          // Sin vueltas para recomponer aca; el intento siguiente del item lo
+          // hace (la escena ya no esta y la nota quedo escrita).
+          throw new GenerateError(
+            `hyperframes check sigue fallando tras ${turnos} vuelta(s) de reparacion; ${archivos.join(", ")} se descarto para recomponerla en el proximo intento:\n${check.texto}`,
+            { phase: "check", itemId: item.id },
+          );
+        }
+        cost += await writeCompositions(cfg, store, item, formatCfg, brief, plan, projectDir, { log, deps, brand });
+        applyFonts(projectDir, plan, { log });
+        turnos++;
+        // La conversacion hablaba de un archivo que ya no existe: se reinicia.
+        mensajes = null;
+        previo = null;
+        continue;
+      }
     }
-    const report = summarizeCheck(res);
-    store.logRun({ kind: "render", itemId: item.id, ok: false, detail: `check fallo: ${report.slice(0, 300)}` });
+    necesitaCheck = true;
 
-    // Que fallo, no solo que fallo algo. Antes esto solo iba al prompt y al log
-    // de la base recortado a 300 chars: en consola se veia "check fallo (intento
-    // 2)" y nada mas, que es exactamente lo que hace que un ciclo de tres
-    // intentos se sienta un cuelgue sin salida.
-    log?.(`check fallo (intento ${attempt + 1}):`);
-    for (const linea of report.split("\n").slice(0, 6)) log?.(`    ${linea}`);
-    const sobrantes = report.split("\n").length - 6;
-    if (sobrantes > 0) log?.(`    (+${sobrantes} mas)`);
-
-    if (attempt === MAX_CHECK_REPAIRS) {
-      throw new GenerateError(`hyperframes check sigue fallando tras ${MAX_CHECK_REPAIRS} reparaciones:\n${report}`, {
+    if (turnos >= maxTurns) {
+      log?.(`se agotaron las ${maxTurns} vueltas de reparacion de esta sesion y el check sigue fallando`, "error");
+      throw new GenerateError(`hyperframes check sigue fallando tras ${turnos} vueltas de reparacion:\n${check.texto}`, {
+        phase: "check",
+        itemId: item.id,
+      });
+    }
+    if (tokens >= budget) {
+      log?.(`la conversacion de reparacion ya gasto ${tokens} tokens (tope ${budget}) y el check sigue fallando`, "error");
+      throw new GenerateError(`la reparacion supero el tope de ${budget} tokens (limits.repairTokenBudget) sin pasar el check:\n${check.texto}`, {
         phase: "check",
         itemId: item.id,
       });
     }
 
-    // La reparacion anterior no movio la aguja: el linter devuelve exactamente
-    // lo mismo. Gastar el intento que queda es pagar otra llamada para llegar al
-    // mismo lugar — y como `check` se reintenta a nivel de item, sin esto se
-    // pagaba ademas un brief y un compose enteros para volver a fallar igual.
-    if (reportePrevio !== null && report === reportePrevio) {
-      log?.("  la reparacion no cambio nada: el linter devuelve los mismos errores, se corta aca");
-      throw new GenerateError(
-        `hyperframes check devuelve los mismos errores despues de reparar ${arregladosPrevios.length} composicion(es); ` +
-          `reintentar no los va a arreglar:\n${report}`,
-        { phase: "check-estancado", itemId: item.id },
-      );
-    }
-
-    const fix = await deps.runClaude(
-      buildRepairPrompt({
-        plan,
-        report,
-        attempt: attempt + 1,
-        reportePrevio,
-        yaTocados: arregladosPrevios,
-      }),
-      {
-        // Reparar es aplicar el dictamen del linter: va al mismo modelo que
-        // compose (M3 en este config). Si la reparacion no pasa el check, el
-        // siguiente intento cae de nuevo aca y el ultimo intento del bucle usa
-        // models.compose como respaldo.
-        model:
-          attempt + 1 === MAX_CHECK_REPAIRS
-            ? cfg.models?.compose
-            : cfg.models?.repair ?? cfg.models?.compose,
-        timeoutMs: cfg.limits?.claudeTimeoutMs,
-        files: gatherContextFiles(projectDir, plan, { includeExisting: true }),
-      },
-    );
-    const { files: answered, missing, skipped } = extractCompositions(fix.text, plan);
-    if (skipped.length) {
-      log?.(`  aviso: el modelo devolvio bloques que no son del plan (${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "..." : ""})`);
-    }
-    const arreglados = Object.keys(answered).length;
-    if (arreglados === 0) {
-      log?.("  aviso: la reparacion no trajo ningun archivo; el proximo check va a fallar igual");
+    const turno = turnos + 1;
+    if (!mensajes) {
+      // Apertura: el dictamen y los archivos, con el prefijo largo (frame.md,
+      // referencia, escenas) marcado como cacheable, porque cada vuelta lo repite.
+      const prompt = buildRepairPrompt({ plan, check, turn: turno, maxTurns, historia });
+      const files = gatherContextFiles(projectDir, plan, { includeExisting: true });
+      mensajes = [{ role: "user", content: conArchivos(prompt, files, { cache: true }) }];
     } else {
-      log?.(`  reparadas ${arreglados} composicion(es): ${Object.keys(answered).join(", ")}`);
+      mensajes.push({ role: "user", content: buildRepairFollowUp({ plan, check, previo, turn: turno, maxTurns, historia }) });
     }
-    // Lo que el proximo intento necesita saber para no repetir esta vuelta.
-    reportePrevio = report;
-    arregladosPrevios = Object.keys(answered);
+    const bloqueados = archivosBloqueados(plan, check);
+    log?.(
+      `reparacion, vuelta ${turno}/${maxTurns}: el modelo ${previo ? "ve el resultado de su arreglo anterior y " : ""}reescribe ` +
+        (bloqueados.length ? `lo que tiene el error bloqueante (${bloqueados.map((f) => f.split("/").pop()).join(", ")})` : "lo que haga falta") +
+        " — una llamada al modelo tarda de uno a diez minutos segun el largo",
+    );
+
+    // Reparar es aplicar el dictamen del linter: va al modelo de repair (o al
+    // de compose si no hay uno aparte). Es el mismo en toda la conversacion.
+    store.beat(item.id, `repair ${turno}/${maxTurns}`);
+    const fix = await deps.runClaudeChat(mensajes, {
+      model: cfg.models?.repair ?? cfg.models?.compose,
+      timeoutMs: cfg.limits?.claudeTimeoutMs,
+    });
+    mensajes = fix.mensajes ?? [...mensajes, { role: "assistant", content: fix.text }];
+    tokens += (fix.inputTokens ?? 0) + (fix.outputTokens ?? 0) + (fix.cacheReadTokens ?? 0);
+    cost += fix.costUsd ?? 0;
+    turnos++;
+    store.logRun({
+      kind: "compose",
+      itemId: item.id,
+      model: fix.model,
+      costUsd: fix.costUsd,
+      ms: fix.ms,
+      ok: true,
+      detail: `reparacion, vuelta ${turno}${fix.cacheReadTokens ? ` (${fix.cacheReadTokens} tokens desde cache)` : ""}`,
+    });
+
+    const { files: answered, skipped } = extractCompositions(fix.text, plan);
+    if (skipped.length) {
+      log?.(`  aviso: el modelo devolvio bloques que no son del plan (${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "..." : ""})`, "aviso");
+    }
+    const truncado = fix.stopReason === "max_tokens";
+    if (truncado) log?.("  aviso: la respuesta se corto en max_tokens", "aviso");
+    const escritos = Object.keys(answered);
+    if (escritos.length === 0) {
+      // Nada cambio en disco: correr el check daria lo mismo. Se le reclama en
+      // la misma conversacion sin gastar un check.
+      log?.("  la reparacion no trajo ningun archivo: no se escribio nada, se le vuelve a pedir", "aviso");
+      previo = { check, escritos: [], truncado };
+      necesitaCheck = false;
+      continue;
+    }
     try {
       writeCompositionsFromAnswer(answered, plan, projectDir);
     } catch (writeErr) {
@@ -2061,22 +2467,28 @@ async function checkAndRepair(cfg, store, item, plan, projectDir, indexHtml, { l
         itemId: item.id,
       });
     }
+    // Decir si toco lo que habia que tocar. En la corrida que motivo esto
+    // reparo dos archivos que no tenian el error y nadie se entero.
+    const tocoBloqueados = bloqueados.filter((b) => escritos.some((e) => normalizePath(e) === normalizePath(b)));
+    const faltan = bloqueados.filter((b) => !tocoBloqueados.includes(b));
+    const nombres = escritos.map((f) => f.split("/").pop()).join(", ");
+    if (!bloqueados.length) {
+      log?.(`  reparadas ${escritos.length} composicion(es): ${nombres}`);
+    } else if (!faltan.length) {
+      log?.(`  reparadas ${escritos.length} composicion(es): ${nombres} — ${bloqueados.length === 1 ? "la que tenia" : "todas las que tenian"} el error bloqueante`);
+    } else {
+      log?.(
+        `  reparadas ${escritos.length} composicion(es): ${nombres} — ` +
+          (tocoBloqueados.length ? `pero no toco ${faltan.map((f) => f.split("/").pop()).join(", ")}, que tambien tiene error bloqueante` : `ninguna es la que tiene el error bloqueante (${faltan.map((f) => f.split("/").pop()).join(", ")})`),
+        "aviso",
+      );
+    }
     // La reparacion vuelve con el marcador donde iban las fuentes: sin esto el
     // check siguiente mide una composicion con la tipografia de respaldo, que
     // no es la que se va a renderizar.
     applyFonts(projectDir, plan, { log });
-    cost += fix.costUsd ?? 0;
-    store.logRun({
-      kind: "compose",
-      itemId: item.id,
-      model: fix.model,
-      costUsd: fix.costUsd,
-      ms: fix.ms,
-      ok: true,
-      detail: `reparacion ${attempt + 1}`,
-    });
+    previo = { check, escritos, truncado };
   }
-  return cost;
 }
 
 function snapshotOutputs(dir) {
@@ -2221,13 +2633,14 @@ async function buildStills(cfg, item, plan, projectDir, contentDir, { log, deps 
   mkdirSync(outDir, { recursive: true });
 
   const at = plan.scenes.map((s) => s.snapshotAt).join(",");
+  log?.(`snapshot: hyperframes fotografia ${plan.scenes.length} escena(s) y despues se mide que el contenido llene el lienzo — suele tardar 1 a 2 minutos`);
   const res = await deps.hyperframes(cfg, projectDir, ["snapshot", "--at", at, "--no-end", "-o", `snapshots/run-${item.revision ?? 0}`], {
     timeoutMs: SNAPSHOT_TIMEOUT_MS,
     log,
   });
   const pngs = snapshotOutputs(outDir);
   if (res.code !== 0 && pngs.length === 0) {
-    throw new GenerateError(`hyperframes snapshot fallo: ${summarizeCheck(res).slice(0, 800)}`, {
+    throw new GenerateError(`hyperframes snapshot fallo: ${summarizeCheck(res).texto.slice(0, 800)}`, {
       phase: "snapshot",
       itemId: item.id,
     });
@@ -2293,13 +2706,14 @@ async function buildStills(cfg, item, plan, projectDir, contentDir, { log, deps 
 
 async function buildVideo(cfg, item, brief, plan, projectDir, contentDir, { log, deps }) {
   const rel = "renders/video.mp4";
+  log?.(`render: hyperframes graba ${plan.total ?? "los"} segundos de video frame a frame en calidad alta — varios minutos, mas cuanto mas largo el video`);
   const res = await deps.hyperframes(cfg, projectDir, ["render", "--quality", "high", "--output", rel], {
     timeoutMs: RENDER_TIMEOUT_MS,
     log,
   });
   const mp4 = join(projectDir, "renders", "video.mp4");
   if (!existsSync(mp4)) {
-    throw new GenerateError(`hyperframes render no produjo el MP4: ${summarizeCheck(res).slice(0, 800)}`, {
+    throw new GenerateError(`hyperframes render no produjo el MP4: ${summarizeCheck(res).texto.slice(0, 800)}`, {
       phase: "render",
       itemId: item.id,
     });
@@ -2400,6 +2814,22 @@ export function reusableBrief(item) {
 }
 
 /**
+ * La bitacora de una pieza: cada linea va a la consola (si hay) y a la base con
+ * su nivel (info | aviso | error), para que el panel muestre lo mismo que se ve
+ * en una terminal — en vivo mientras corre y despues.
+ */
+export function bitacoraDe(store, itemId, log) {
+  return (texto, nivel = "info") => {
+    log?.(texto);
+    try {
+      store.addLog(itemId, nivel, texto);
+    } catch {
+      /* la bitacora no puede tumbar la generacion */
+    }
+  };
+}
+
+/**
  * La marca de una pieza: la suya, o la marca por defecto si la pieza es vieja.
  * Sin marcas todavia, devuelve null y el pipeline cae al proyecto de la config.
  */
@@ -2408,12 +2838,16 @@ export function resolveBrand(store, item) {
   return propia ?? store.defaultBrand();
 }
 
-export async function generateItem(cfg, store, itemId, { log, deps: overrides } = {}) {
+export async function generateItem(cfg, store, itemId, { log: logExterno, deps: overrides } = {}) {
   const deps = { ...defaultDeps(), ...(overrides ?? {}) };
   const item = store.getItem(itemId);
   if (!item) throw new GenerateError(`item no encontrado: ${itemId}`);
   const formatCfg = validateFormat(cfg, item.format);
   const brand = resolveBrand(store, item);
+  // Todo lo que se diga de esta pieza va a la consola Y a la base: el panel
+  // muestra la bitacora en vivo y despues.
+  const log = bitacoraDe(store, item.id, logExterno);
+  store.pruneLogs(item.id);
 
   // Un solo generador por item. Sin esto dos procesos (el panel y una terminal,
   // por ejemplo) escriben la misma fila de `jobs` y el contador de escenas va
@@ -2464,11 +2898,14 @@ export async function generateItem(cfg, store, itemId, { log, deps: overrides } 
     // brief se rehace cuando no hay, o cuando el usuario rechazo (sube revision).
     const saved = reusableBrief(item);
     let brief;
+    log?.(`[${item.id}] generacion de ${item.format} (revision ${item.revision ?? 0})`);
     if (saved) {
       brief = saved;
-      log?.(`[${item.id}] brief reusado (revision ${item.revision})`);
+      log?.(`brief reusado de esta misma revision: no se vuelve a pagar; se va directo a componer`);
     } else {
-      log?.(`[${item.id}] brief (${item.format}${item.feedback ? ", con feedback de rechazo" : ""})`);
+      log?.(
+        `brief (${item.format}${item.feedback ? ", con feedback de rechazo" : ""}): el modelo decide narrativa, escenas y copy — una llamada, suele tardar 1 a 2 minutos`,
+      );
       const made = await makeBrief(cfg, store, item, formatCfg, { log, deps, brand });
       brief = made.brief;
       costUsd += made.cost;
@@ -2510,7 +2947,7 @@ export async function generateItem(cfg, store, itemId, { log, deps: overrides } 
       costUsd += await writeCompositions(cfg, store, item, formatCfg, brief, plan, projectDir, { log, deps, brand });
       applyFonts(projectDir, plan, { log });
       store.beat(item.id, "check");
-      costUsd += await checkAndRepair(cfg, store, item, plan, projectDir, indexHtml, { log, deps, brand });
+      costUsd += await checkAndRepair(cfg, store, item, formatCfg, brief, plan, projectDir, indexHtml, { log, deps, brand });
       store.beat(item.id, "render");
 
       const built =
@@ -2607,11 +3044,12 @@ function safeRead(path) {
 export const RETRIABLE_PHASES = new Set(["layout", "check", "repair", "compose", "snapshot"]);
 
 // `check-estancado` queda AFUERA a proposito. Es el fallo de check en el que el
-// linter ya devolvio dos veces exactamente los mismos errores: el problema no es
-// una mala tirada del modelo, es que la composicion no puede cumplir esa regla
-// como esta planteada. Reintentar la pieza entera cuesta un brief y un compose
-// completos —minutos y varios dolares en un carrusel— para terminar en el mismo
-// lugar. Mejor fallar con el dictamen a la vista y que alguien decida.
+// mismo error bloqueante (misma firma) volvio cuatro veces: sobrevivio a dos
+// reparaciones y a recomponer la escena desde el brief. El problema no es una
+// mala tirada del modelo, es que el brief pide algo que esa escena no puede
+// cumplir. Reintentar la pieza entera cuesta un compose y otra ronda de
+// reparaciones para terminar en el mismo lugar. Mejor fallar con el dictamen a
+// la vista y que alguien decida (rechazar con feedback rehace el brief).
 
 /**
  * Genera un item y, si el fallo es de los que mejoran con el siguiente intento,
@@ -2630,7 +3068,10 @@ export async function generateWithRetry(cfg, store, itemId, { log, deps, retries
       last = err;
       const phase = err?.phase;
       if (attempt >= max || !RETRIABLE_PHASES.has(phase)) throw err;
-      log?.(`[${itemId}] fallo en ${phase}; reintento ${attempt + 2}/${max + 1}`);
+      bitacoraDe(store, itemId, log)(
+        `[${itemId}] fallo en ${phase}; reintento ${attempt + 2}/${max + 1} — se reusan el brief y las escenas que ya estaban bien`,
+        "aviso",
+      );
     }
   }
 }

@@ -189,13 +189,23 @@ linter en contra, una escena que el modelo no entrego), el sistema la reintenta 
 una vez antes de darla por fallada: `limits.retriesPerItem` en la config, 0 para
 volver al comportamiento de apretar generar a mano.
 
-Lo que **no** se reintenta es un `check` estancado. Cuando el linter devuelve dos
-veces exactamente los mismos errores, la reparación no está aportando: el problema
-es estructural y volver a intentar cuesta un brief y un compose completos para
-llegar al mismo lugar. Ahí corta, imprime los errores en consola y los deja en el
-detalle de la pieza. Mientras la reparación sí avanza (el linter cambia de queja)
-se usan los dos intentos, y cada reparación recibe qué hizo la anterior y qué
-errores sobrevivieron, para que no repita el mismo arreglo.
+**Cuando `hyperframes check` falla, la reparación es una conversación**, no un
+parche a ciegas. El modelo recibe el dictamen separado en lo que bloquea el
+render (los `error`) y lo que es cosmético (warnings e infos, con los que el
+check pasa igual), con los archivos marcados; escribe; se corre el check; y el
+resultado le vuelve como mensaje siguiente de la misma conversación — qué error
+sobrevivió a su arreglo, cuál apareció, cuál se fue. Hasta `limits.repairTurns`
+vueltas (4) y `limits.repairTokenBudget` tokens.
+
+Si el **mismo** error bloqueante (misma regla, archivo, selector y tiempo) vuelve
+vuelta tras vuelta, se escala en vez de insistir: la segunda vez se le dice al
+modelo que su arreglo no sirvió y que cambie de planteo; la tercera se descarta
+esa escena y se recompone desde el brief; la cuarta corta con `check-estancado`,
+que **no** se reintenta — sobrevivió a dos reparaciones y a rehacer la escena, así
+que el brief pide algo que esa escena no puede cumplir, y eso lo decide una
+persona (rechazar la pieza con un comentario rehace el brief). Todo esto queda en
+la **bitácora** de la pieza, que el panel muestra en vivo mientras corre y
+después, con lo bloqueante distinguido de lo cosmético.
 
 Cuando el puerto 4317 esta ocupado, el arranque dice que PID lo tiene y como
 cerrarlo; para levantarlo en otro puerto, `npm run bot -- --port 4318`.
@@ -338,8 +348,12 @@ Dónde se va la plata, en orden:
    los timeouts masivos que se ven con seis llamadas en paralelo).
 2. **Reparaciones (cuando `check` falla)** — son mecánicas (aplicar el
    dictamen del linter). También van a M3: el ahorro de un modelo chico no
-   compensa la inconsistencia con el resto del flujo. El último intento de
-   cada pieza vuelve a `models.compose` como respaldo.
+   compensa la inconsistencia con el resto del flujo. Van en una sola
+   conversación por sesión de check, con el prefijo largo (frame.md, la
+   composición de referencia, las escenas) marcado como cacheable
+   (`cache_control`): cada vuelta lo repite y el endpoint lo cobra a precio de
+   lectura de cache. Cuántos tokens vinieron del cache queda en la fila de
+   `runs` de cada vuelta.
 3. **Brief** — una llamada por pieza.
 
 El regulador más grande es el mix: un video o carrusel cuesta ~20× lo que un

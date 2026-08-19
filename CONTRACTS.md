@@ -91,6 +91,11 @@ store.get(k, fallback?) -> string
 store.set(k, v)
 store.logRun({ kind, itemId?, model?, costUsd?, ms?, ok?, detail? })
 store.costSummary(sinceDays?) -> [{ kind, n, usd }]
+
+// bitacora por pieza (lo que se ve en consola, con nivel)
+store.addLog(itemId, nivel, texto)          // nivel: info | aviso | error
+store.logsDe(itemId, { desde?, limit? })    // -> [{ id, nivel, texto, created_at }]
+store.pruneLogs(itemId, keep?)              // deja las ultimas `keep` (600)
 ```
 
 **Formatos:** el pipeline decide por `formats.<id>.kind` (`text` | `still` |
@@ -119,6 +124,18 @@ runClaude(prompt, {
   }
 
 runClaudeJSON(prompt, opts)   // igual, mas { data } ya parseado; reintenta 1 vez
+
+// Conversacion: recibe el historial ([{ role, content }], el ultimo del usuario)
+// y devuelve lo mismo que runClaude mas `mensajes` con el turno del asistente
+// agregado, listo para seguir. Mismo costo, reintentos y timeout.
+runClaudeChat(mensajes, opts)
+
+// El contenido de un mensaje del usuario con archivos inlineados adelante. Con
+// { cache: true } devuelve dos bloques y el de archivos lleva
+// cache_control: { type: "ephemeral" } — para conversaciones que repiten un
+// prefijo largo. Si el endpoint lo rechaza (400 que lo nombra), el wrapper
+// reintenta una vez sin la marca; nunca falla una llamada por eso.
+conArchivos(prompt, files, { cache? }) -> string | [{ type: "text", text, cache_control? }]
 
 // Ante 429 / 5xx / cortes de red, runClaude reintenta solo (opts.retries, 2 por
 // defecto) respetando `retry-after`. El timeout NO se reintenta.
@@ -243,21 +260,36 @@ export async function generatePending(cfg, store, { limit, brandId, log } = {}) 
 export const RETRIABLE_PHASES   // que fases vale la pena repetir
 ```
 
-**`check` y su reparacion.** `MAX_CHECK_REPAIRS = 2`: hasta 3 `check` y 2
-parches. Dos reglas que existen para que un fallo estructural no se coma el
-presupuesto:
+**`check` y su reparacion.** Es una conversacion (`runClaudeChat`), no una
+llamada suelta por parche:
 
-- Cada `buildRepairPrompt` recibe `reportePrevio` y `yaTocados`, asi sabe que
-  archivos reescribio el intento anterior y que findings sobrevivieron. Sin eso
-  volvia a aplicar el mismo arreglo.
-- Si el report es **identico** al anterior, se corta con la fase
-  `check-estancado`, que **no** esta en `RETRIABLE_PHASES` a proposito: la
-  composicion no puede cumplir esa regla como esta planteada, y repetir la pieza
-  entera cuesta un brief y un compose completos para llegar al mismo error.
+- `summarizeCheck(res)` devuelve `{ findings, bloqueantes, secundarios, texto }`.
+  Bloqueante = severidad `error`, el mismo criterio que hace fallar el check.
+  `firmaDe(finding)` = `codigo|file|selector|t`: lo que identifica a UN error
+  aunque el resto del report cambie.
+- `buildRepairPrompt({ plan, check, turn, maxTurns, historia })` abre la
+  conversacion: "que bloquea" (arreglar esto y nada mas), "que es cosmetico" (el
+  check pasa igual, agrupado por regla), y la lista de archivos con los que
+  tienen error bloqueante marcados. Los archivos van con `conArchivos(..., {
+  cache: true })`.
+- Cada vuelta: se escriben los archivos, `applyFonts`, `hyperframes check
+  --json`, y `buildRepairFollowUp({ plan, check, previo, ... })` le dice que
+  sobrevivio (el arreglo no sirvio), que aparecio y que se resolvio. Si el modelo
+  no devolvio archivos no se corre el check (daria lo mismo): se le reclama.
+- Topes: `limits.repairTurns` (4) y `limits.repairTokenBudget` (600k).
+  Agotarlos falla con fase `check`, reintentable: el intento siguiente reusa las
+  escenas y `.bca/check-history.json` (vistas por firma).
+- Escalada por firma repetida (`VISTAS_PARA_RECOMPONER = 3`,
+  `VISTAS_PARA_CORTAR = 4`): vista 2 se repara diciendo que sobrevivio; vista 3
+  se descarta la escena, se anota en `.bca/layout-notes.json` y se recompone
+  desde el brief con `writeCompositions` (misma maquinaria que la fase
+  `layout`; la conversacion se reinicia); vista 4 corta con `check-estancado`,
+  que **no** esta en `RETRIABLE_PHASES` a proposito: el brief pide algo que esa
+  escena no puede cumplir y eso lo decide una persona.
 
-El report ademas se imprime en consola (las 6 primeras lineas). Antes solo iba
-al prompt y al `logRun` recortado, y en pantalla se veia `check fallo (intento
-2)` sin decir que fallaba.
+Todo lo que se dice de una pieza va por `bitacoraDe(store, itemId, log)`: a la
+consola y a la tabla `logs` con nivel (`error` = bloqueante, `aviso` =
+cosmetico, `info`), que el panel muestra en vivo y despues.
 
 Un job cuyo `pid` ya no existe no bloquea a nadie (`jobAlive`): el guardia de
 "ya se esta generando" mira el proceso, no solo el latido.

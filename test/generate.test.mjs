@@ -5,7 +5,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -18,6 +18,8 @@ import {
   distributeDurations,
   extractCompositions,
   extractGsapTag,
+  firmaDe,
+  firmasBloqueantes,
   gatherContextFiles,
   generateItem,
   generatePending,
@@ -568,100 +570,297 @@ test("si el brief no valida dos veces, el item vuelve a planned con el motivo", 
   assert.match(after.error, /exactamente 6 slides/);
 });
 
-test("si falla el render el item vuelve a planned aunque haya pasado por building", async () => {
+// ---------------------------------------------------------------------------
+// check + reparacion conversacional
+// ---------------------------------------------------------------------------
+
+/**
+ * Stub de runClaudeChat: un modelo razonable. Reescribe los archivos que el
+ * ultimo mensaje marca con "<- has a blocking error" (o lo que diga `elegir`)
+ * y devuelve el historial con su turno agregado, como el wrapper real.
+ */
+function chatStub(calls, { elegir } = {}) {
+  return async (mensajes, opts = {}) => {
+    const last = mensajes.at(-1);
+    const texto = typeof last.content === "string" ? last.content : last.content.map((b) => b.text ?? "").join("");
+    const n = calls.push({ mensajes: [...mensajes], texto, opts });
+    const files = elegir
+      ? elegir(texto, n)
+      : [...texto.matchAll(/^- (compositions\/frames\/[\w.-]+\.html).*<- has a blocking error/gm)].map((m) => m[1]);
+    const body = files.map((f) => ["```html", f, "<template></template>", "```"].join("\n")).join("\n\n");
+    return {
+      text: body,
+      costUsd: 0.02,
+      ms: 10,
+      model: "stub",
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheReadTokens: 0,
+      stopReason: "end_turn",
+      mensajes: [...mensajes, { role: "assistant", content: body }],
+    };
+  };
+}
+
+/** Salida de `check --json` con un error bloqueante en `file` y N warnings en otros. */
+function checkFail({ file = "compositions/frames/03-slide-role-3.html", selector = "span.hot", t = 16.75, warnings = 0, otros = [] } = {}) {
+  const lint = [
+    {
+      severity: "error",
+      code: "content_overlap",
+      message: "Two text blocks overlap and may render unreadable.",
+      file,
+      selector,
+      time: t,
+      suggestion: "Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.",
+    },
+    ...otros,
+  ];
+  for (let i = 0; i < warnings; i++) {
+    lint.push({
+      severity: i % 2 ? "info" : "warning",
+      code: i % 2 ? "content_overlap" : "contrast_aa_failure",
+      message: `cosmetico ${i}`,
+      file: `compositions/frames/0${(i % 2) + 1}-slide-role-${(i % 2) + 1}.html`,
+      selector: `#x${i}`,
+    });
+  }
+  return { code: 1, stdout: JSON.stringify({ ok: false, lint }), stderr: "" };
+}
+const CHECK_OK = { code: 0, stdout: '{"ok":true}', stderr: "" };
+
+/** hyperframes stub: `checks` decide que devuelve cada check; snapshot escribe PNGs. */
+function hyperframesStub(cliCalls, checks) {
+  let n = 0;
+  return async (_cfg, projectDir, args) => {
+    cliCalls.push(args[0]);
+    if (args[0] === "check") {
+      const r = checks[Math.min(n, checks.length - 1)];
+      n++;
+      return typeof r === "function" ? r() : r;
+    }
+    const outDir = join(projectDir, args[args.indexOf("-o") + 1]);
+    mkdirSync(outDir, { recursive: true });
+    for (let i = 0; i < 6; i++) writeFileSync(join(outDir, `frame-0${i}-at-${i * 3 + 2}s.png`), "png");
+    return { code: 0, stdout: "", stderr: "" };
+  };
+}
+
+test("check: la primera reparacion apunta al archivo con el error bloqueante, no a los warnings (caso real)", async () => {
+  // La corrida documentada en SPEC-reparacion.md: 1 error en 03 y 11 avisos en
+  // 01 y 02. Dos reparaciones se fueron a 01 y 02. Ahora el prompt separa lo
+  // que bloquea y el modelo (razonable) toca 03 en la primera vuelta.
   const { cfg, store } = makeEnv();
-  const item = addItem(store, { format: "image" });
-  const seen = spyStatuses(store);
+  const item = addItem(store, { format: "carousel" });
   const composeCalls = [];
+  const chatCalls = [];
   const cliCalls = [];
+  const escritos = [];
 
-  await assert.rejects(
-    generateItem(cfg, store, item.id, {
-      deps: {
-        runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
-        runClaude: composerStub(composeCalls),
-        hyperframes: async (_cfg, _dir, args) => {
-          cliCalls.push(args[0]);
-          return { code: 1, stdout: '{"ok":false,"contrast":[{"code":"contrast_fail","message":"1.9:1"}]}', stderr: "" };
-        },
-      },
-    }),
-    /devuelve los mismos errores/,
-  );
-
-  const after = store.getItem(item.id);
-  assert.equal(after.status, "planned");
-  assert.match(after.error, /contrast_fail/);
-  assert.equal(after.asset_path, null);
-  assert.ok(seen.includes("building"), "tiene que haber pasado por building");
-  assert.equal(seen.at(-1), "planned", "pero no puede quedarse ahi");
-
-  // El linter devuelve SIEMPRE lo mismo, asi que la reparacion no esta
-  // sirviendo: se corta en el segundo check en vez de gastar el tercero.
-  // NUNCA se llega a renderizar.
-  assert.deepEqual(cliCalls, ["check", "check"]);
-  assert.equal(composeCalls.length, 2); // composicion + 1 parche
-  assert.match(composeCalls[1].prompt, /contrast_fail/);
-  assert.match(composeCalls[1].prompt, /repair attempt 1 of 2/);
-});
-
-test("check: si el linter cambia de queja, se usan las dos reparaciones", async () => {
-  const { cfg, store } = makeEnv();
-  const item = addItem(store, { format: "image" });
-  const composeCalls = [];
-  const cliCalls = [];
-  let ronda = 0;
-
-  await assert.rejects(
-    generateItem(cfg, store, item.id, {
-      deps: {
-        runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
-        runClaude: composerStub(composeCalls),
-        hyperframes: async (_cfg, _dir, args) => {
-          cliCalls.push(args[0]);
-          // Una queja distinta cada vez: la reparacion esta avanzando, aunque
-          // todavia no llegue. Eso si merece agotar los intentos.
-          ronda++;
-          return {
-            code: 1,
-            stdout: `{"ok":false,"contrast":[{"code":"contrast_fail","message":"ronda ${ronda}"}]}`,
-            stderr: "",
-          };
-        },
-      },
-    }),
-    /check sigue fallando/,
-  );
-
-  assert.deepEqual(cliCalls, ["check", "check", "check"]);
-  assert.equal(composeCalls.length, 3); // composicion + 2 parches
-  // El segundo parche sabe que hizo el primero y que quedo sin resolver.
-  assert.match(composeCalls[2].prompt, /previous attempt already did/);
-  assert.match(composeCalls[2].prompt, /repair attempt 2 of 2/);
-});
-
-test("check: el parche que repite se corta sin gastar el intento que queda", async () => {
-  const { cfg, store } = makeEnv();
-  const item = addItem(store, { format: "image" });
-  const composeCalls = [];
-
-  const err = await generateItem(cfg, store, item.id, {
+  const res = await generateItem(cfg, store, item.id, {
     deps: {
-      runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
+      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
       runClaude: composerStub(composeCalls),
-      hyperframes: async () => ({
-        code: 1,
-        stdout: '{"ok":false,"contrast":[{"code":"contrast_fail","message":"1.9:1"}]}',
-        stderr: "",
-      }),
+      runClaudeChat: async (mensajes, opts) => {
+        const r = await chatStub(chatCalls)(mensajes, opts);
+        escritos.push(...[...r.text.matchAll(/^(compositions\/frames\/[\w.-]+\.html)$/gm)].map((m) => m[1]));
+        return r;
+      },
+      hyperframes: hyperframesStub(cliCalls, [() => checkFail({ warnings: 11 }), CHECK_OK]),
+    },
+  });
+
+  assert.equal(store.getItem(item.id).status, "built");
+  assert.ok(existsSync(res.assetPath));
+  assert.equal(chatCalls.length, 1, "una sola vuelta de reparacion");
+  assert.deepEqual(escritos, ["compositions/frames/03-slide-role-3.html"], "la primera reparacion toca 03 y solo 03");
+
+  const p = chatCalls[0].texto;
+  assert.match(p, /# What blocks the render/);
+  assert.match(p, /03-slide-role-3.html\n   content_overlap at t=16\.75, selector `span\.hot`/);
+  assert.match(p, /fix: Give each block its own zone/);
+  assert.match(p, /# Everything below is cosmetic \(11 findings\)\. The check PASSES with these present\./);
+  assert.match(p, /\[warning\] contrast_aa_failure x6 \(01-slide-role-1\.html\)/, "los cosmeticos van agrupados por regla, no renglon por renglon");
+  assert.match(p, /\[info\] content_overlap x5 \(02-slide-role-2\.html\)/);
+  assert.match(p, /- compositions\/frames\/03-slide-role-3.html .*<- has a blocking error/);
+  assert.doesNotMatch(p, /01-slide-role-1.html .*<- has a blocking error/);
+  assert.match(p, /Only one file has a blocking error\. Start there\./);
+  // El prefijo largo (frame.md, referencia, escenas) va marcado como cacheable.
+  const primero = chatCalls[0].mensajes[0].content;
+  assert.ok(Array.isArray(primero) && primero[0].cache_control?.type === "ephemeral");
+  assert.match(primero[0].text, /<<<BCA_FILE path="frame\.md">>>/);
+});
+
+test("check: el modelo ve el resultado de su arreglo en la misma conversacion y se renderiza sin recomponer", async () => {
+  const { cfg, store } = makeEnv();
+  const item = addItem(store, { format: "carousel" });
+  const composeCalls = [];
+  const chatCalls = [];
+  const cliCalls = [];
+
+  await generateItem(cfg, store, item.id, {
+    deps: {
+      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runClaude: composerStub(composeCalls),
+      runClaudeChat: chatStub(chatCalls),
+      hyperframes: hyperframesStub(cliCalls, [
+        () => checkFail({ file: "compositions/frames/03-slide-role-3.html" }),
+        // el arreglo destapo otro error en otro archivo: es avance, no repeticion
+        () => checkFail({ file: "compositions/frames/05-slide-role-5.html", selector: "#h1", t: 3 }),
+        CHECK_OK,
+      ]),
+    },
+  });
+
+  assert.equal(store.getItem(item.id).status, "built");
+  assert.deepEqual(cliCalls, ["check", "check", "check", "snapshot"]);
+  assert.equal(chatCalls.length, 2, "dos vueltas en la MISMA conversacion");
+  assert.equal(chatCalls[0].mensajes.length, 1);
+  assert.equal(chatCalls[1].mensajes.length, 3, "apertura + respuesta + seguimiento");
+  const seg = chatCalls[1].texto;
+  assert.match(seg, /The check ran again after your rewrite of compositions\/frames\/03-slide-role-3.html/);
+  assert.match(seg, /# New blocking error \(not present before your rewrite\)/);
+  assert.match(seg, /05-slide-role-5.html/);
+  assert.match(seg, /# Resolved by your rewrite \(do not touch again\): content_overlap in 03-slide-role-3.html/);
+  assert.doesNotMatch(seg, /SURVIVED/);
+  // No se recompuso nada: compose fue solo el inicial (6 slides de a 2 = 3 lotes).
+  assert.equal(composeCalls.length, 3);
+});
+
+test("check: la misma firma escala — repara, avisa que sobrevivio, recompone la escena, y a la cuarta corta", async () => {
+  const { cfg, store } = makeEnv();
+  const item = addItem(store, { format: "carousel" });
+  const composeCalls = [];
+  const chatCalls = [];
+  const cliCalls = [];
+  const dir = join(cfg.hyperframes.projectsDir, item.id);
+
+  const err = await generateWithRetry(cfg, store, item.id, {
+    deps: {
+      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runClaude: composerStub(composeCalls),
+      runClaudeChat: chatStub(chatCalls),
+      // Siempre el mismo error, mismo selector, mismo t.
+      hyperframes: hyperframesStub(cliCalls, [() => checkFail({ warnings: 2 })]),
     },
   }).catch((e) => e);
 
-  // La fase la marca como no reintentable: repetir el item entero costaria un
-  // brief y un compose completos para llegar al mismo error.
-  assert.equal(err.phase, "check-estancado");
+  // 1a vista: reparar. 2a: reparar diciendo que sobrevivio. 3a: recomponer la
+  // escena. 4a: cortar. Ni un check mas.
+  assert.equal(err.phase, "check-estancado", err.message);
   assert.ok(!RETRIABLE_PHASES.has(err.phase), "no se reintenta un check estancado");
+  assert.match(err.message, /4 veces seguidas en compositions\/frames\/03-slide-role-3.html/);
+  assert.match(err.message, /rechazala con un comentario/);
+  assert.deepEqual(cliCalls, ["check", "check", "check", "check"]);
+
+  assert.equal(chatCalls.length, 2, "dos reparaciones conversadas");
+  assert.match(chatCalls[1].texto, /SURVIVED your rewrite\. The fix did not work\./);
+  assert.match(chatCalls[1].texto, /You rewrote this file and the linter still reports the exact same selector and time \(seen 2x\)/);
+  assert.match(chatCalls[1].texto, /Do not apply the same fix again/);
+
+  // La tercera vez se descarto la escena y se recompuso desde el brief: una
+  // llamada de compose extra, SOLO para 03, con la nota de por que.
+  assert.equal(composeCalls.length, 4, "3 lotes iniciales + 1 recomposicion");
+  const recompose = composeCalls[3].prompt;
+  assert.match(recompose, /This exact file was rejected: compositions\/frames\/03-slide-role-3.html/);
+  assert.match(recompose, /failed `hyperframes check` 3 times in a row/);
+  assert.match(recompose, /compose the scene again from the brief with a different staging/);
+  assert.match(recompose, /Write exactly ONE file: compositions\/frames\/03-slide-role-3.html/);
+  const notas = JSON.parse(readFileSync(join(dir, ".bca", "layout-notes.json"), "utf8"));
+  assert.ok(notas["compositions/frames/03-slide-role-3.html"]);
+
+  // La historia de firmas queda en disco (con 4 vistas) y el item vuelve a planned.
+  const historia = JSON.parse(readFileSync(join(dir, ".bca", "check-history.json"), "utf8"));
+  assert.deepEqual(Object.values(historia), [4]);
+  assert.equal(store.getItem(item.id).status, "planned");
+  assert.match(store.getItem(item.id).error, /mismo error 4 veces/);
+
+  // Y la bitacora distingue lo bloqueante de lo cosmetico.
+  const bitacora = store.logsDe(item.id);
+  assert.ok(bitacora.some((l) => l.nivel === "error" && /content_overlap/.test(l.texto)));
+  assert.ok(bitacora.some((l) => l.nivel === "aviso" && /cosmetic/.test(l.texto)));
+  assert.ok(bitacora.some((l) => /la que tenia el error bloqueante/.test(l.texto)), "dice que la reparacion toco el archivo correcto");
+  assert.ok(bitacora.some((l) => /se recompone esa escena desde el brief/.test(l.texto)));
 });
+
+test("check: la historia de firmas se borra cuando el check pasa", async () => {
+  const { cfg, store } = makeEnv();
+  const item = addItem(store, { format: "image" });
+  const dir = join(cfg.hyperframes.projectsDir, item.id);
+  await generateItem(cfg, store, item.id, {
+    deps: {
+      runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
+      runClaude: composerStub([]),
+      runClaudeChat: chatStub([]),
+      hyperframes: hyperframesStub([], [() => checkFail({ file: "compositions/frames/01-one-line-on-an-ink-black-fie.html" }), CHECK_OK]),
+    },
+  });
+  assert.equal(store.getItem(item.id).status, "built");
+  assert.ok(!existsSync(join(dir, ".bca", "check-history.json")));
+});
+
+test("check: si el modelo no devuelve archivos se le reclama sin volver a correr el check", async () => {
+  const { cfg, store } = makeEnv();
+  const item = addItem(store, { format: "image" });
+  const chatCalls = [];
+  const cliCalls = [];
+  let vuelta = 0;
+
+  await generateItem(cfg, store, item.id, {
+    deps: {
+      runClaudeJSON: async () => ({ data: IMAGE_BRIEF, costUsd: 0.1, ms: 1, model: "stub" }),
+      runClaude: composerStub([]),
+      // Primera vuelta: prosa sin fences. Segunda: el archivo.
+      runClaudeChat: chatStub(chatCalls, { elegir: (texto) => (++vuelta === 1 ? [] : ["compositions/frames/01-one-line-on-an-ink-black-fie.html"]) }),
+      hyperframes: hyperframesStub(cliCalls, [() => checkFail({ file: "compositions/frames/01-one-line-on-an-ink-black-fie.html" }), CHECK_OK]),
+    },
+  });
+
+  assert.equal(store.getItem(item.id).status, "built");
+  assert.deepEqual(cliCalls, ["check", "check", "snapshot"], "entre las dos vueltas NO hubo check: nada habia cambiado");
+  assert.equal(chatCalls.length, 2);
+  assert.match(chatCalls[1].texto, /Your last answer contained NO ```html fences/);
+  assert.match(chatCalls[1].texto, /the check was not re-run/);
+});
+
+test("check: agotar las vueltas falla con fase check, que si se reintenta reusando escenas e historia", async () => {
+  const { cfg: base, store } = makeEnv();
+  const cfg = { ...base, limits: { ...base.limits, repairTurns: 2, retriesPerItem: 0 } };
+  const item = addItem(store, { format: "carousel" });
+  const composeCalls = [];
+  const chatCalls = [];
+  const cliCalls = [];
+  let n = 0;
+
+  const err = await generateItem(cfg, store, item.id, {
+    deps: {
+      runClaudeJSON: async () => ({ data: carouselBrief(6), costUsd: 0.1, ms: 1, model: "stub" }),
+      runClaude: composerStub(composeCalls),
+      runClaudeChat: chatStub(chatCalls),
+      // Cada check se queja de algo distinto: hay avance, pero no alcanza.
+      hyperframes: hyperframesStub(cliCalls, [() => checkFail({ file: `compositions/frames/0${(n++ % 6) + 1}-slide-role-${((n - 1) % 6) + 1}.html`, selector: `#s${n}` })]),
+    },
+  }).catch((e) => e);
+
+  assert.equal(err.phase, "check");
+  assert.ok(RETRIABLE_PHASES.has("check"));
+  assert.match(err.message, /sigue fallando tras 2 vueltas/);
+  assert.equal(chatCalls.length, 2);
+  assert.deepEqual(cliCalls, ["check", "check", "check"]);
+
+  // El intento siguiente arranca sin recomponer y con la historia de firmas.
+  const dir = join(cfg.hyperframes.projectsDir, item.id);
+  assert.ok(existsSync(join(dir, ".bca", "check-history.json")));
+  assert.equal(safeCount(join(dir, "compositions", "frames")), 6, "las 6 escenas siguen en disco");
+});
+
+function safeCount(dir) {
+  try {
+    return readdirSync(dir).length;
+  } catch {
+    return 0;
+  }
+}
 
 test("rescueStuck reencola lo que quedo en building de una corrida muerta", () => {
   const { store } = makeEnv();
@@ -948,12 +1147,24 @@ test("summarizeCheck arma un reporte accionable para el modelo", () => {
     ],
     layout: { errors: [{ severity: "error", code: "canvas_overflow", message: "text leaves the canvas", selector: "#h1" }] },
   });
-  const out = summarizeCheck({ stdout });
+  const check = summarizeCheck({ stdout });
+  const out = check.texto;
   assert.match(out, /contrast_fail/);
   assert.match(out, /selector=#cta/);
   assert.match(out, /fix=#E8EDDF/);
   assert.match(out, /canvas_overflow/);
   assert.match(out, /file=compositions\/frames\/01-a\.html/);
+  // y la estructura: que bloquea, con sus campos sueltos
+  assert.equal(check.bloqueantes.length, 2);
+  assert.equal(check.secundarios.length, 0);
+  assert.deepEqual(
+    check.bloqueantes.map((f) => [f.codigo, f.file, f.selector, f.t, f.fix]),
+    [
+      ["contrast_fail", "compositions/frames/01-a.html", "#cta", "2.5", "#E8EDDF"],
+      ["canvas_overflow", "", "#h1", "", ""],
+    ],
+  );
+  assert.equal(firmaDe(check.bloqueantes[0]), "contrast_fail|compositions/frames/01-a.html|#cta|2.5");
 
   // los errores van primero: son los que gatean el exit code
   const mixed = summarizeCheck({
@@ -966,10 +1177,15 @@ test("summarizeCheck arma un reporte accionable para el modelo", () => {
       ],
     }),
   });
-  assert.match(mixed.split("\n")[0], /\[error\] canvas_overflow/);
+  assert.match(mixed.texto.split("\n")[0], /\[error\] canvas_overflow/);
+  // bloqueante es lo que hace fallar el check: severidad error. El resto es cosmetico.
+  assert.deepEqual(mixed.bloqueantes.map((f) => f.codigo), ["canvas_overflow"]);
+  assert.deepEqual(mixed.secundarios.map((f) => f.codigo), ["studio_missing_editable_id", "content_overlap"]);
+  assert.deepEqual(firmasBloqueantes(mixed), ["canvas_overflow|a.html||"]);
 
   const fallback = summarizeCheck({ stdout: "", stderr: "chrome no arranco" });
-  assert.match(fallback, /chrome no arranco/);
+  assert.match(fallback.texto, /chrome no arranco/);
+  assert.equal(fallback.findings.length, 0);
 });
 
 test("buildRepairPrompt lista solo los archivos de composicion y prohibe tocar index.html", () => {
@@ -979,9 +1195,21 @@ test("buildRepairPrompt lista solo los archivos de composicion y prohibe tocar i
     brief: carouselBrief(6),
     itemId: "id",
   });
-  const p = buildRepairPrompt({ plan, report: "contrast_fail", attempt: 1 });
+  const check = summarizeCheck({
+    stdout: JSON.stringify({ ok: false, lint: [{ severity: "error", code: "contrast_fail", message: "1.9:1", file: plan.scenes[1].file, selector: "#h" }] }),
+  });
+  const p = buildRepairPrompt({ plan, check, turn: 1, maxTurns: 4 });
   assert.match(p, /index\.html is owned by the pipeline: do not touch it/);
   for (const s of plan.scenes) assert.ok(p.includes(s.file));
+  assert.match(p, /repair turn 1 of 4/);
+  assert.match(p, new RegExp(`- ${plan.scenes[1].file} .*<- has a blocking error`));
+  assert.equal((p.match(/<- has a blocking error/g) ?? []).length, 1);
+  // sin cosmeticos no hay seccion cosmetica
+  assert.doesNotMatch(p, /Everything below is cosmetic/);
+
+  // El check fallo pero sin findings marcados como error: se listan todos como candidatos.
+  const raro = summarizeCheck({ stdout: JSON.stringify({ ok: false, lint: [{ severity: "warning", code: "x", message: "y" }] }) });
+  assert.match(buildRepairPrompt({ plan, check: raro }), /no finding is tagged as an error\. The cause is among these/);
 });
 
 // ---------------------------------------------------------------------------
