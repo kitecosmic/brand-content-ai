@@ -84,10 +84,15 @@ const MAX_DIAS = 92;
 const LOTE_PENDIENTES = 20;
 // Marca en el kv de que alguien ya recorrio el asistente y no quiere verlo mas.
 const TOUR_VISTO = "ui:tour-visto";
+const SESION_SECRETO = "auth:session-secret";
 const STALE_SECONDS = 120;
 const MAX_ANGLE = 300;
 const MAX_MESSAGE = 2000;
-const SESION_HORAS = 24 * 14;
+// Cuanto dura la sesion. Con "mantener la sesion abierta" la cookie sobrevive a
+// cerrar el navegador; sin eso se va con el, que es lo que espera quien entra
+// desde una maquina que no es suya.
+const SESION_DIAS_RECORDADO = 30;
+const SESION_DIAS_SUELTA = 1;
 
 export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   const listenPort = Number(port ?? cfg.web?.port ?? 4317);
@@ -108,10 +113,16 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   }
 
 
-  // Secreto de sesion: si no lo definis, se inventa uno por arranque. Reiniciar
-  // el panel cierra las sesiones abiertas, que es un precio barato por no
-  // dejar un secreto en disco sin que nadie lo haya pedido.
-  const secreto = env("SESSION_SECRET") || randomBytes(32).toString("hex");
+  // Secreto de sesion. El del entorno manda; si no hay, se genera uno solo la
+  // primera vez y queda guardado en la base.
+  //
+  // Antes se inventaba uno por arranque "para no dejar un secreto en disco sin
+  // que nadie lo haya pedido". El precio resulto ser mucho mas caro de lo que
+  // parecia: cada reinicio del panel —cada `git pull && deploy.sh`, cada
+  // `restart`— cerraba todas las sesiones abiertas, y desde afuera eso se ve
+  // como una app que te desconecta sola. La base ya guarda las API keys; el
+  // secreto de firma no es un dato mas sensible que esos.
+  const secreto = secretoDeSesion(store);
   const staleSeconds = Math.max(5, Number(cfg.limits?.jobStaleSeconds ?? STALE_SECONDS));
 
   // Lo que lanzo ESTE panel. La verdad de "se esta generando" es la tabla jobs;
@@ -592,10 +603,14 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       },
       {
         titulo: "Leé sus fuentes",
-        texto:
-          "Tocá «Sincronizar» para que lea el sitio y saque los hechos que el contenido puede afirmar. Sin esto las piezas salen genéricas.",
-        ruta: brand ? `/marcas/${encodeURIComponent(brand.id)}` : "/marcas",
-        ir: brand ? `Abrir ${brand.name}` : "Ir a Marcas",
+        texto: brand
+          ? "Abrí tu marca y tocá «Sincronizar»: lee el sitio y saca los hechos que el contenido puede afirmar. Sin esto las piezas salen genéricas."
+          : "Una vez que exista la marca, se sincroniza desde su pantalla: de ahí salen los hechos que el contenido puede afirmar.",
+        // Sincronizar vive en la pantalla de LA marca, no en la lista. Sin
+        // marca todavia no hay adonde mandar a nadie: el paso anterior es el
+        // que corresponde, y el texto lo dice.
+        ruta: brand ? `/marcas/${encodeURIComponent(brand.id)}` : null,
+        ir: brand ? `Abrir ${brand.name}` : "",
         hecho: fuentes.length > 0,
       },
       {
@@ -640,9 +655,9 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       titulo: paso.titulo,
       texto: paso.texto,
       hecho: paso.hecho,
-      // Si ya estas parado en la pantalla del paso no hay adonde ir: hay que
-      // hacerlo, y el boton sobra.
-      ir: ruta === paso.ruta ? null : `${paso.ruta}?tour=${i + 1}`,
+      // Sin ruta (un paso que todavia no tiene donde vivir) o parado ya en la
+      // pantalla del paso, el boton sobra: no hay adonde ir.
+      ir: !paso.ruta || ruta === paso.ruta ? null : `${paso.ruta}?tour=${i + 1}`,
       irTexto: paso.ir,
       siguiente: sig ? `${sig.ruta}?tour=${i + 2}` : null,
     };
@@ -1418,7 +1433,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       log?.(`[web] cuenta creada: ${user.email} (duenio)`);
       res.writeHead(303, {
         location: "/empezar",
-        "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
+        "set-cookie": galletaDeSesion(req, secreto, user.id, true),
       });
       return res.end();
     } catch (err) {
@@ -1448,7 +1463,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       log?.(`[web] se sumo al equipo: ${user.email}`);
       res.writeHead(303, {
         location: "/empezar",
-        "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
+        "set-cookie": galletaDeSesion(req, secreto, user.id, true),
       });
       return res.end();
     } catch (err) {
@@ -1496,7 +1511,7 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       }
       res.writeHead(303, {
         location: faltaOnboarding() ? "/empezar" : "/crear",
-        "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesion(secreto, user.id), 60 * 60 * SESION_HORAS),
+        "set-cookie": galletaDeSesion(req, secreto, user.id, recordarme(params)),
       });
       return res.end();
     }
@@ -1519,7 +1534,12 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
     }
     res.writeHead(303, {
       location: faltaOnboarding() ? "/empezar" : "/crear",
-      "set-cookie": galleta(esHttps(req), "bca_sesion", firmarSesionClave(), 60 * 60 * SESION_HORAS),
+      "set-cookie": galleta(
+        esHttps(req),
+        "bca_sesion",
+        firmarSesionClave(recordarme(params)),
+        recordarme(params) ? 60 * 60 * 24 * SESION_DIAS_RECORDADO : null,
+      ),
     });
     res.end();
   }
@@ -1548,8 +1568,9 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
   }
 
   /** Sesion del modo clave unica: no hay usuario, solo "entro quien sabia la clave". */
-  function firmarSesionClave() {
-    const vence = Date.now() + SESION_HORAS * 3600 * 1000;
+  function firmarSesionClave(recordar = false) {
+    const dias = recordar ? SESION_DIAS_RECORDADO : SESION_DIAS_SUELTA;
+    const vence = Date.now() + dias * 24 * 3600 * 1000;
     return `${vence}.${createHmac("sha256", secreto).update(String(vence)).digest("hex")}`;
   }
 
@@ -1628,7 +1649,43 @@ function leerCookies(req) {
  */
 function galleta(seguro, nombre, valor, maxAge) {
   const flag = seguro ? "; Secure" : "";
-  return `${nombre}=${encodeURIComponent(valor)}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly${flag}`;
+  // maxAge null = cookie de sesion: el navegador la borra al cerrarse. Es lo
+  // que corresponde cuando no pediste que te recuerde.
+  const edad = maxAge === null ? "" : `; Max-Age=${maxAge}`;
+  return `${nombre}=${encodeURIComponent(valor)}; Path=/${edad}; SameSite=Lax; HttpOnly${flag}`;
+}
+
+/** La cookie de sesion de alguien que acaba de entrar. */
+function galletaDeSesion(req, secreto, userId, recordar) {
+  const dias = recordar ? SESION_DIAS_RECORDADO : SESION_DIAS_SUELTA;
+  return galleta(
+    esHttps(req),
+    "bca_sesion",
+    firmarSesion(secreto, userId, { dias }),
+    recordar ? 60 * 60 * 24 * SESION_DIAS_RECORDADO : null,
+  );
+}
+
+/**
+ * El secreto con el que se firman las sesiones.
+ *
+ * BCA_SESSION_SECRET gana, para quien quiera manejarlo desde el entorno o
+ * rotarlo. Si no esta, se genera una vez y se guarda: rotarlo a mano es
+ * `store.del(SESION_SECRETO)` y reiniciar, que cierra todas las sesiones.
+ */
+function secretoDeSesion(store) {
+  const delEntorno = env("SESSION_SECRET");
+  if (delEntorno) return delEntorno;
+  const guardado = store.get(SESION_SECRETO);
+  if (guardado) return guardado;
+  const nuevo = randomBytes(32).toString("hex");
+  store.set(SESION_SECRETO, nuevo);
+  return nuevo;
+}
+
+/** La casilla del login. Viene marcada, asi que su ausencia es una decision. */
+function recordarme(params) {
+  return params.get("recordarme") === "1";
 }
 
 /** Si la request llego por TLS, sea directo o a traves del proxy de adelante. */

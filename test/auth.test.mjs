@@ -172,6 +172,12 @@ test("el tutorial acompana: dice el paso, lleva a la pantalla y no pide nada", a
   // El paso sale del estado real: al guardar la key, el tutorial avanza solo.
   await post("/action/ajustes", { minimax_api_key: "una-key-cualquiera", back: "/crear" }, cookie);
   assert.match(await (await get("/crear", cookie)).text(), /Paso 2 de 4/);
+
+  // Sincronizar vive en la pantalla de la marca. Sin marca no hay adonde ir, y
+  // el paso 3 no puede terminar mandando al mismo lugar que el 2.
+  const tres = await (await get("/crear?tour=3", cookie)).text();
+  assert.match(tres, /Paso 3 de 4/);
+  assert.doesNotMatch(tres, /href="\/marcas\?tour=3"/, "no repite el destino del paso anterior");
 });
 
 test("el tutorial se apaga, y el signo de pregunta lo trae de vuelta", async () => {
@@ -332,4 +338,53 @@ test("la cookie de sesion se marca Secure solo cuando la request llego por HTTPS
     /;\s*Secure/i,
     "detras del proxy con TLS la cookie va marcada",
   );
+});
+
+test("la sesion sobrevive a reiniciar el panel", async () => {
+  const cookie = galleta(
+    await post("/login", {
+      email: "joel@marca.com",
+      password: "una frase larga y facil",
+      recordarme: "1",
+    }),
+  );
+  assert.equal((await get("/crear", cookie)).status, 200);
+
+  // Otro proceso del panel sobre la misma base. El secreto de firma sale de
+  // ahi, asi que la cookie que ya tenias sigue valiendo: antes se inventaba uno
+  // por arranque y cada redeploy dejaba a todos afuera.
+  const otro = await startWeb(CFG, store, {}, { port: 4383, log: () => {} });
+  try {
+    const r = await fetch("http://127.0.0.1:4383/crear", {
+      redirect: "manual",
+      headers: { cookie },
+    });
+    assert.equal(r.status, 200, "el panel reiniciado reconoce la sesion");
+  } finally {
+    otro.closeAllConnections?.();
+    otro.close();
+  }
+});
+
+test("recordarme decide si la sesion sobrevive al navegador", async () => {
+  assert.match(await (await get("/login")).text(), /name="recordarme"/, "la casilla esta en el login");
+
+  const recordado = await post("/login", {
+    email: "joel@marca.com",
+    password: "una frase larga y facil",
+    recordarme: "1",
+  });
+  assert.match(
+    recordado.headers.get("set-cookie") ?? "",
+    /Max-Age=\d{6,}/,
+    "marcada, la cookie tiene vencimiento propio",
+  );
+
+  const suelto = await post("/login", {
+    email: "joel@marca.com",
+    password: "una frase larga y facil",
+  });
+  const cookie = suelto.headers.get("set-cookie") ?? "";
+  assert.match(cookie, /bca_sesion=/);
+  assert.doesNotMatch(cookie, /Max-Age/, "sin marcar, se va cuando cerras el navegador");
 });

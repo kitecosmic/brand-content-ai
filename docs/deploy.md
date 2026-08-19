@@ -84,8 +84,10 @@ cp .env.example .env
 nano .env      # BCA_MINIMAX_API_KEY, TZ, y Telegram si lo vas a usar
 ```
 
-Poné también `BCA_SESSION_SECRET` con una cadena larga y random: sin eso, cada
-redeploy cierra las sesiones abiertas del panel.
+Las sesiones del panel sobreviven a los redeploys sin que configures nada: el
+secreto con el que se firman se guarda en la base la primera vez que arranca.
+`BCA_SESSION_SECRET` existe para manejarlo desde el entorno, y ponerlo (o
+cambiarlo) cierra las sesiones abiertas — que es la forma de echar a todos.
 
 `TZ` tiene que coincidir con `calendar.timezone` del config. La hora de
 publicación es hora local, y un servidor recién instalado está en UTC.

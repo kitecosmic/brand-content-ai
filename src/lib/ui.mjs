@@ -479,11 +479,12 @@ body{
    es el texto chico debajo de un campo de formulario. Pisarla convertia cada
    uno de esos textos en un circulo de 26px con las palabras encimadas. */
 .ayuda-boton{
-  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
-  border:1px solid var(--line);color:var(--muted);text-decoration:none;
-  font-size:13px;font-weight:600;position:relative;flex:none;
+  width:26px;height:26px;padding:0;border-radius:50%;
+  display:grid;place-items:center;flex:none;position:relative;
+  background:none;border:1px solid var(--line);color:var(--muted);
+  font:inherit;font-size:13px;font-weight:600;line-height:1;text-decoration:none;
 }
-.ayuda-boton:hover,.ayuda-boton.activo{border-color:var(--line-fuerte);color:var(--ink)}
+.ayuda-boton:hover,.ayuda-boton.activo{background:none;border-color:var(--line-fuerte);color:var(--ink)}
 .ayuda-boton.pendiente::after{
   content:"";position:absolute;top:-1px;right:-1px;width:7px;height:7px;
   border-radius:50%;background:var(--accent);border:1.5px solid var(--bg);
@@ -527,6 +528,11 @@ body{
 .portada-form{margin-bottom:22px}
 .portada-form .campo{margin-bottom:16px}
 .portada-form input{padding:10px 12px;font-size:14px}
+.portada-recordar{
+  display:flex;align-items:center;gap:8px;margin:-6px 0 16px;
+  font-size:13px;color:var(--muted);cursor:pointer;
+}
+.portada-recordar input{width:auto;margin:0}
 .portada-pie{font-size:12px;line-height:1.5;color:var(--hint);margin:0;padding-top:18px;border-top:1px solid var(--line)}
 .portada-pie a{color:var(--muted)}
 @media (max-width:520px){.portada{padding-top:10vh}}

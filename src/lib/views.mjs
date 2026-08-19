@@ -909,6 +909,10 @@ export function vistaLogin({ error, email = "", modoClave = false } = {}) {
              <input type="password" id="password" name="password" required autocomplete="current-password">
            </div>`
     }
+    <label class="portada-recordar">
+      <input type="checkbox" name="recordarme" value="1" checked>
+      Mantener la sesión abierta un mes
+    </label>
     <button class="primario" type="submit" style="width:100%;margin-top:4px">Entrar</button>
   </form>
 

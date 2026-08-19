@@ -295,9 +295,12 @@ Para publicarlo de verdad: creá tu cuenta primero, ponelo detrás de HTTPS
 (nginx, Caddy, Cloudflare) y arrancá con el bind abierto.
 
 ```bash
-BCA_SESSION_SECRET=una-cadena-random   # opcional: las sesiones sobreviven al reinicio
 npm run web -- --host 0.0.0.0
 ```
+
+Las sesiones sobreviven a los reinicios solas: el secreto con el que se firman se
+guarda en la base la primera vez. `BCA_SESSION_SECRET` sigue existiendo para
+manejarlo desde el entorno o rotarlo cuando quieras.
 
 `BCA_PANEL_PASSWORD` sigue existiendo para instalaciones que venían con una
 clave compartida: si hay cuentas creadas, se ignora.
