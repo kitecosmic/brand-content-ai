@@ -563,7 +563,15 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
         brand,
         revisiones: store.brandRevisions(brand.id),
         fuentes: store.allKnowledge(brand.id),
-        trabajando: running.has(`__marca:${brand.id}`) ? "aplicando el cambio y rearmando el proyecto" : "",
+        // Las dos cosas que corren de fondo sobre una marca. Faltaba el sync, y
+        // como el cartel es el que trae el data-vivo que recarga la pagina, al
+        // sincronizar quedaba un "Leyendo las fuentes..." congelado: terminaba
+        // en el server y no habia forma de enterarse sin recargar a mano.
+        trabajando: running.has(`__sync:${brand.id}`)
+          ? "leyendo sus fuentes y sacando los hechos citables"
+          : running.has(`__marca:${brand.id}`)
+            ? "aplicando el cambio y rearmando el proyecto"
+            : "",
         // Sincronizar y revisar tambien corren de fondo: sus fallos se veian
         // igual de poco que los de crear.
         fallos: [

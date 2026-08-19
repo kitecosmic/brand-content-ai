@@ -147,3 +147,47 @@ test("Crear avisa que faltan las fuentes en vez de dejar fallar la pieza", async
   });
   assert.doesNotMatch(await ver("/crear"), /Falta leer las fuentes/, "sincronizada, el aviso se va");
 });
+
+test("mientras sincroniza, la pantalla de la marca se actualiza sola", async () => {
+  // Un sync que tarda: lo que importa es lo que se ve mientras corre.
+  let terminar;
+  const enCurso = new Promise((r) => {
+    terminar = r;
+  });
+  server.closeAllConnections?.();
+  server.close();
+  server = await startWeb(
+    { formats: {}, limits: {}, web: { port: 0 }, models: {} },
+    store,
+    { sincronizar: async () => enCurso },
+    { port: 4390, log: () => {} },
+  );
+  base = "http://127.0.0.1:4390";
+
+  // El test de mas arriba piso el secreto de sesion en la base a proposito, asi
+  // que este panel nuevo no reconoce la cookie vieja: hay que entrar de nuevo.
+  const entrada = await post("/login", {
+    email: "joel@marca.com",
+    password: "una frase larga y facil",
+    recordarme: "1",
+  });
+  cookie = (entrada.headers.get("set-cookie") ?? "").split(";")[0];
+
+  await post("/action/sync", { brand: "keio", back: "/marcas/keio" }, cookie);
+  const html = await ver("/marcas/keio");
+
+  // El cartel es el que trae el data-vivo: sin el, la pagina se queda quieta y
+  // no hay forma de enterarse de que ya termino.
+  assert.match(html, /data-vivo="\/api\/marcas"/, "la pagina tiene que refrescarse sola");
+  assert.match(html, /leyendo sus fuentes/, "y decir que esta haciendo");
+
+  // Y la API que consulta ese cartel avisa que todavia no termino.
+  const api = await (await fetch(`${base}/api/marcas`, { headers: { cookie } })).json();
+  assert.equal(api.trabajando, true);
+  assert.equal(api.recargar, false, "recargar recien cuando el trabajo termino");
+
+  terminar();
+  await new Promise((r) => setTimeout(r, 30));
+  const despues = await (await fetch(`${base}/api/marcas`, { headers: { cookie } })).json();
+  assert.equal(despues.recargar, true, "al terminar, la pagina se entera");
+});
