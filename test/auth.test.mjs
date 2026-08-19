@@ -388,3 +388,24 @@ test("recordarme decide si la sesion sobrevive al navegador", async () => {
   assert.match(cookie, /bca_sesion=/);
   assert.doesNotMatch(cookie, /Max-Age/, "sin marcar, se va cuando cerras el navegador");
 });
+
+test("ningun paso del tutorial manda a una pantalla que no existe", async () => {
+  const cookie = galleta(
+    await post("/login", { email: "joel@marca.com", password: "una frase larga y facil" }),
+  );
+
+  // Sin marca creada, los pasos que viven "en la marca" no tienen adonde
+  // llevar. El link tiene que quedarse donde esta, no apuntar a /null.
+  for (const n of [1, 2, 3, 4]) {
+    const html = await (await get(`/crear?tour=${n}`, cookie)).text();
+    const cuadro = html.slice(html.indexOf('<aside class="tour"'));
+    // Sin la barra opcional el regex no veia nada: el bug producia
+    // href="null?tour=3", relativo, que el navegador resolvia a /null.
+    assert.doesNotMatch(
+      cuadro,
+      /href="\/?(null|undefined)/,
+      `el paso ${n} manda a una ruta que no existe`,
+    );
+    assert.match(cuadro, new RegExp(`Paso ${n} de 4`));
+  }
+});

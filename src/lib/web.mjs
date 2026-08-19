@@ -659,7 +659,10 @@ export function startWeb(cfg, store, handlers = {}, { port, host, log } = {}) {
       // pantalla del paso, el boton sobra: no hay adonde ir.
       ir: !paso.ruta || ruta === paso.ruta ? null : `${paso.ruta}?tour=${i + 1}`,
       irTexto: paso.ir,
-      siguiente: sig ? `${sig.ruta}?tour=${i + 2}` : null,
+      // Si el paso que sigue todavia no tiene pantalla propia —sincronizar vive
+      // en la marca, y la marca no existe— se avanza el numero sin mover a
+      // nadie. Sin esto, `${null}` armaba un link a /null.
+      siguiente: sig ? `${sig.ruta || ruta || "/crear"}?tour=${i + 2}` : null,
     };
   }
 
